@@ -11,44 +11,44 @@
 # Important - If you redistribute it and/or modify this addon - must give contribution in Title and Code
 # aswell as ask for permission to modify / redistribute this addon or the code itself
 
-import os, sys
-from aqt.utils import *
-from typing import Optional
-from aqt.qt import *
-import anki
-import threading
-from anki.hooks import addHook, wrap
-from aqt.reviewer import Reviewer
-from aqt import mw, editor, gui_hooks
-from aqt.qt import QDialog, QGridLayout, QLabel, QPixmap, QPainter, QFont, Qt, QVBoxLayout, QWidget, QAction
-import random
+import base64
 import csv
-from aqt.qt import *
-import requests
+import distutils.dir_util
 import json
-from PyQt6.QtGui import *
-from PyQt6.QtWidgets import *
+import os
+import pathlib
+import platform
+import random
+import shutil
+import sys
+import threading
+import time
+import wave
+from pathlib import Path
+from typing import List, Optional, Union
+
+import anki
+import aqt
+import requests
+from anki.collection import Collection
+from anki.hooks import addHook, wrap
+from aqt import editor, gui_hooks, mw, utils
+from aqt.qt import *
+from aqt.qt import (QAction, QDialog, QFont, QGridLayout, QLabel, QPainter,
+                    QPixmap, Qt, QVBoxLayout, QWidget)
+from aqt.reviewer import Reviewer
+from aqt.utils import *
 from PyQt6.QtCore import *
-from PyQt6.QtWebEngineWidgets import *
-#from PyQt6.QtWidgets import QAction
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QDialog, QVBoxLayout, QLabel, QWidget
+#from PyQt6.QtCore import QUrl
+from PyQt6.QtGui import *
+from PyQt6.QtGui import QSurfaceFormat
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
-#from PyQt6.QtCore import QUrl
-import base64
-from aqt import utils
-from PyQt6.QtGui import QSurfaceFormat
-import aqt
-import pathlib
-from pathlib import Path
-from typing import List, Union
-import shutil
-import distutils.dir_util
-from anki.collection import Collection
-import csv
-import time, wave
-import platform
-import markdown
+from PyQt6.QtWebEngineWidgets import *
+from PyQt6.QtWidgets import *
+#from PyQt6.QtWidgets import QAction
+from PyQt6.QtWidgets import (QApplication, QDialog, QLabel, QMainWindow,
+                             QPushButton, QVBoxLayout, QWidget)
 
 #from .download_pokeapi_db import create_pokeapidb
 config = mw.addonManager.getConfig(__name__)
@@ -272,14 +272,6 @@ animate_time = config["animate_time"] #default: true; false = animate for 0.8 se
 view_main_front = config["view_main_front"] #default: true => -1; false = 1
 gif_in_collection = config["gif_in_collection"] #default: true => -1; false = 1
 sound_effects = config["sound_effects"] #default: false; true = sound_effects on
-styling_in_reviewer = config["styling_in_reviewer"] #default: true; false = no styling in reviewer
-no_more_news = config["YouShallNotPass_Ankimon_News"] #default: false; true = no more news
-automatic_battle = config["automatic_battle"] #default: 0; 1 = catch_pokemon; 2 = defeat_pokemon
-defeat_shortcut = config["defeat_key"] #default: 5; ; Else if not 5 => controll + Key for capture
-catch_shortcut = config["catch_key"] #default: 6; Else if not 6 => controll + Key for capture
-reviewer_buttons = config["pokemon_buttons"] #default: true; false = no pokemon buttons in reviewer
-remove_levelcap = config["misc.remove_level_cap"] #default: false; true = no more news
-
 
 if sound_effects is True:
     from . import playsound
@@ -311,249 +303,106 @@ else:
     hp_only_spacer = 0
     wild_hp_spacer = 0
 
-class CheckPokemonData(QDialog):
-    def __init__(self, mainpokemon_path, mypokemon_path, config):
-        super().__init__()
-        self.mainpokemon_path = mainpokemon_path
-        self.mypokemon_path = mypokemon_path
-        self.config = config
-        self.sync_pokemons()
-        message = "Ankimon Pokemon Sync:"
-        message += "There is a difference between the Ankiweb Synced Pokémon data and the local Pokémon data. \n"
-        message += "Please choose to either load the local data and sync to Ankiweb or sync Ankiweb data to your local storage \n"
-        # Set the window title for the dialog
-        self.setWindowTitle("Ankimon Pokemon Sync:")
-
-        # Create a QLabel instance
-        self.label = QLabel(f"{message}", self)
-
-        # Create two QPushButtons for syncing options
-        self.sync_local_button = QPushButton("Load Local Data and Sync to Ankiweb", self)
-        self.sync_ankiweb_button = QPushButton("Sync Ankiweb Data to Local Storage", self)
-        qconnect(self.sync_local_button.clicked, self.sync_data_to_ankiweb)
-        qconnect(self.sync_ankiweb_button.clicked, self.sync_data_to_local)
-        # Create a QVBoxLayout instance
-        self.layout = QVBoxLayout()
-        # Add the QLabel and QPushButtons to the layout
-        self.layout.addWidget(self.label)
-        self.layout.addWidget(self.sync_local_button)
-        self.layout.addWidget(self.sync_ankiweb_button)
-        # Set the dialog's layout
-        self.setLayout(self.layout)
-
-    def get_pokemon_data(self):
-        with open(str(self.mypokemon_path), 'r', encoding='utf-8') as file:
-            self.pokemon_collection_sync_data = json.load(file)
-        with open(str(self.mainpokemon_path), 'r', encoding='utf-8') as file:
-            self.mainpokemon_sync_data = json.load(file)
-
-    def sync_pokemons(self):
-        self.mainpokemon_web_data = self.config.get('mainpokemon', '')
-        self.pokemon_collection_web_data = self.config.get('pokemon_collection', '')
-        #showInfo("Pokémon data synced.")
-        #showInfo(f"Mainpokemon {mainpokemon}")
-        #showInfo(f"Pokémon Collection {pokemon_collection}")    #function to sync pokemon data to ankiweb and local files
-        
-        self.get_pokemon_data()
-
-        if self.mainpokemon_web_data != self.mainpokemon_sync_data or self.pokemon_collection_web_data != self.pokemon_collection_sync_data:
-            # Show dialog window with two buttons
-            self.show()
-    
-    def sync_data_to_local(self):
-        with open(str(self.mypokemon_path), 'w', encoding='utf-8') as file:
-            json.dump(self.pokemon_collection_web_data, file, ensure_ascii=False, indent=4)
-        with open(str(self.mainpokemon_path), 'w', encoding='utf-8') as file:
-            json.dump(self.mainpokemon_web_data, file, ensure_ascii=False, indent=4)
-        showInfo("Ankiweb Data synced to local.")
-        self.close()
-    
-    def sync_data_to_ankiweb(self):
-        self.config["pokemon_collection"] = self.pokemon_collection_sync_data
-        self.config["mainpokemon"] = self.mainpokemon_sync_data
-        mw.addonManager.writeConfig(__name__, self.config)
-        #config["mainpokemon"] = []
-        #config["pokemon_collection"] = []
-        showInfo("Local Data synced to AnkiWeb.")
-        self.close()
-
-    def sync_on_anki_close(self):
-        tooltip("Syncing PokemonData to AnkiWeb")
-        self.get_pokemon_data()
-        self.config["pokemon_collection"] = self.pokemon_collection_sync_data
-        self.config["mainpokemon"] = self.mainpokemon_sync_data
-        mw.addonManager.writeConfig(__name__, self.config)
-
-    def modify_json_configuration_on_save(self, text: str) -> str:
-        try:
-            # Load the JSON text
-            config = json.loads(text)
-            # Iterate through the configuration and update fields
-            #for key in config:
-                #if key not in ["mainPokemon", "pokemon_collection"]:
-                    #pass
-            self.get_pokemon_data()
-            # Set mainPokemon and pokemon_collection to predefined values
-            config["pokemon_collection"] = self.pokemon_collection_sync_data
-            config["mainpokemon"] = self.mainpokemon_sync_data
-            self.config = config
-            tooltip("Saved Ankimon Configuration, Please Restart Anki")
-
-            # Convert the modified JSON object back to a string
-            modified_text = json.dumps(config, indent=4)
-            return modified_text
-
-        except json.JSONDecodeError:
-            # Handle JSON decoding errors
-            print("Invalid JSON format")
-            return text
-
-check_data = CheckPokemonData(mainpokemon_path, mypokemon_path, config)
-
-gui_hooks.addon_config_editor_will_save_json.append(check_data.modify_json_configuration_on_save)
-gui_hooks.sync_did_finish.append(check_data.sync_on_anki_close)
-
-#dont show all mainpokemon and mypokemon information in config
-
-# Define the hook function
-def addon_config_editor_will_display_json(text: str) -> str:
-    """
-    This function modifies the JSON configuration text before displaying it to the user.
-    It replaces the values for the keys "pokemon_collection" and "mainpokemon".
-    
-    Args:
-        text (str): The JSON configuration text.
-    
-    Returns:
-        str: The modified JSON configuration text.
-    """
+def test_online_connectivity(url='http://www.google.com', timeout=5):
     try:
-        # Parse the JSON text
-        config = json.loads(text)
-        
-        if "pokemon_collection" in config:
-            del config["pokemon_collection"]
-        if "mainpokemon" in config:
-            del config["mainpokemon"]
-        
-        # Convert back to JSON string
-        modified_text = json.dumps(config, indent=4)
-        return modified_text
-    except json.JSONDecodeError:
-        # Handle JSON parsing error
-        return text
-    
-#On Save on Config, accept new config and add pokemon collection and mainpokemon to it
-gui_hooks.addon_config_editor_will_save_json.append(check_data.modify_json_configuration_on_save)
-gui_hooks.addon_config_editor_will_display_json.append(addon_config_editor_will_display_json)
+        # Attempt to get the URL
+        response = requests.get(url, timeout=timeout)
 
-try:
-    def test_online_connectivity(url='https://raw.githubusercontent.com/Unlucky-Life/ankimon/main/update_txt.md', timeout=5):
+        # Check if the response status code is 200 (OK)
+        if response.status_code == 200:
+            return True
+    except requests.ConnectionError:
+        # Connection error means no internet connectivity
+        return False
+
+online_connectivity = test_online_connectivity()
+
+if ssh != False:
+    # Function to check if the content of the two files is the same
+    def compare_files(local_content, github_content):
+        return local_content == github_content
+
+    # Function to read the content of the local file
+    def read_local_file(file_path):
         try:
-            # Attempt to get the URL
-            response = requests.get(url, timeout=timeout)
+            with open(file_path, 'r', encoding='utf-8') as file:
+                return file.read()
+        except FileNotFoundError:
+            return None
 
-            # Check if the response status code is 200 (OK)
-            if response.status_code == 200:
-                return True
-        except requests.ConnectionError:
-            # Connection error means no internet connectivity
-            return False
-    online_connectivity = test_online_connectivity()
-except:
-    online_connectivity = False
+    # Function to write content to a local file
+    def write_local_file(file_path, content):
+        with open(file_path, 'w', encoding='utf-8') as file:
+            file.write(content)
 
-#Connect to GitHub and Check for Notification and HelpGuideChanges
-try:
-    if ssh != False:
-        # Function to check if the content of the two files is the same
-        def compare_files(local_content, github_content):
-            return local_content == github_content
-
-        # Function to read the content of the local file
-        def read_local_file(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as file:
-                    return file.read()
-            except FileNotFoundError:
-                return None
-
-        # Function to write content to a local file
-        def write_local_file(file_path, content):
-            with open(file_path, 'w', encoding='utf-8') as file:
-                file.write(content)
-
-        # Function to check if the file exists on GitHub and read its content
-        def read_github_file(url):
-            response = requests.get(url)
-                
-            if response.status_code == 200:
-                # File exists, parse the Markdown content
-                content = response.text
-                html_content = markdown.markdown(content)
-                return content, html_content
-            else:
-                return None, None
+    # Function to check if the file exists on GitHub and read its content
+    def read_github_file(url):
+        response = requests.get(url)
             
-    if online_connectivity != False:
-        if ssh != False:
-            # Custom Dialog class
-            class UpdateNotificationWindow(QDialog):
-                def __init__(self, content):
-                    super().__init__()
-                    global icon_path
-                    self.setWindowTitle("Ankimon Notifications")
-                    self.setGeometry(100, 100, 600, 400)
-
-                    layout = QVBoxLayout()
-                    self.text_edit = QTextEdit()
-                    self.text_edit.setReadOnly(True)
-                    self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-                    self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff) # For horizontal scrollbar, if you want it off
-                    self.text_edit.setHtml(content)
-                    layout.addWidget(self.text_edit)
-                    self.setWindowIcon(QIcon(str(icon_path)))
-
-                    self.setLayout(layout)
-
-            # URL of the file on GitHub
-            github_url = "https://raw.githubusercontent.com/Unlucky-Life/ankimon/main/update_txt.md"
-            # Path to the local file
-            local_file_path = addon_dir / "updateinfos.md"
-            # Read content from GitHub
-            github_content, github_html_content = read_github_file(github_url)
-            # Read content from the local file
-            local_content = read_local_file(local_file_path)
-            # If local content exists and is the same as GitHub content, do not open dialog
-            if local_content is not None and compare_files(local_content, github_content):
-                pass
-            else:
-                # Download new content from GitHub
-                if github_content is not None:
-                    # Write new content to the local file
-                    write_local_file(local_file_path, github_content)
-                    dialog = UpdateNotificationWindow(github_html_content)
-                    if no_more_news is False:
-                        dialog.exec()
-                else:
-                    showWarning("Failed to retrieve Ankimon content from GitHub.")
-except Exception as e:
+        if response.status_code == 200:
+            # File exists, parse the Markdown content
+            content = response.text
+            html_content = markdown.markdown(content)
+            return content, html_content
+        else:
+            return None, None
+        
+if online_connectivity != False:
     if ssh != False:
-        showInfo(f"Error in try connect to GitHub: {e}")
+        import markdown
 
-##HelpGuide
-class HelpWindow(QDialog):
-    def __init__(self):
-        super().__init__()
-        html_content = " "
-        global icon_path
-        help_local_file_path = addon_dir / "HelpInfos.html"
-        try:
+        # Custom Dialog class
+        class UpdateNotificationWindow(QDialog):
+            def __init__(self, content):
+                super().__init__()
+                global icon_path
+                self.setWindowTitle("Ankimon Notifications")
+                self.setGeometry(100, 100, 600, 400)
+
+                layout = QVBoxLayout()
+                self.text_edit = QTextEdit()
+                self.text_edit.setReadOnly(True)
+                self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+                self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff) # For horizontal scrollbar, if you want it off
+                self.text_edit.setHtml(content)
+                layout.addWidget(self.text_edit)
+                self.setWindowIcon(QIcon(str(icon_path)))
+
+                self.setLayout(layout)
+
+        # URL of the file on GitHub
+        github_url = "https://raw.githubusercontent.com/Unlucky-Life/ankimon/main/update_txt.md"
+        # Path to the local file
+        local_file_path = addon_dir / "updateinfos.md"
+        # Read content from GitHub
+        github_content, github_html_content = read_github_file(github_url)
+        # Read content from the local file
+        local_content = read_local_file(local_file_path)
+        # If local content exists and is the same as GitHub content, do not open dialog
+        if local_content is not None and compare_files(local_content, github_content):
+            pass
+        else:
+            # Download new content from GitHub
+            if github_content is not None:
+                # Write new content to the local file
+                write_local_file(local_file_path, github_content)
+                dialog = UpdateNotificationWindow(github_html_content)
+                dialog.exec()
+            else:
+                showWarning("Failed to retrieve Ankimon content from GitHub.")
+
+if ssh != False:
+    ##HelpGuide
+    class HelpWindow(QDialog):
+        def __init__(self):
+            super().__init__()
+            html_content = " "
+            global icon_path
             if online_connectivity != False:
                 # URL of the file on GitHub
-                help_local_file_path = addon_dir / "HelpInfos.html"
                 help_github_url = "https://raw.githubusercontent.com/Unlucky-Life/ankimon/main/src/Ankimon/HelpInfos.html"
                 # Path to the local file
+                help_local_file_path = addon_dir / "HelpInfos.html"
                 local_content = read_local_file(help_local_file_path)
                 # Read content from GitHub
                 github_content, github_html_content = read_github_file(help_github_url)
@@ -566,36 +415,30 @@ class HelpWindow(QDialog):
                         write_local_file(help_local_file_path, github_content)
                         html_content = github_html_content
             else:
-                help_local_file_path = addon_dir / "HelpInfos.html"
                 local_content = read_local_file(help_local_file_path)
                 html_content = local_content
-        except:
-            showWarning("Failed to retrieve Ankimon HelpGuide from GitHub.")
-            local_content = read_local_file(help_local_file_path)
-            html_content = local_content
-        self.setWindowTitle("Ankimon HelpGuide")
-        self.setGeometry(100, 100, 600, 400)
 
-        layout = QVBoxLayout()
-        self.text_edit = QTextEdit()
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.text_edit.setHtml(html_content)
-        layout.addWidget(self.text_edit)
-        self.setWindowIcon(QIcon(str(icon_path)))
-        self.setLayout(layout)
+            self.setWindowTitle("Ankimon HelpGuide")
+            self.setGeometry(100, 100, 600, 400)
 
+            layout = QVBoxLayout()
+            self.text_edit = QTextEdit()
+            self.text_edit.setReadOnly(True)
+            self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+            self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.text_edit.setHtml(html_content)
+            layout.addWidget(self.text_edit)
+            self.setWindowIcon(QIcon(str(icon_path)))
+            self.setLayout(layout)
+            
 def open_help_window():
-    try:
+    if ssh != False:
         help_dialog = HelpWindow()
         help_dialog.exec()
-    except:
-        showWarning("Error in opening HelpGuide")
         
 try:
-    from aqt.sound import av_player
     from anki.sound import SoundOrVideoTag
+    from aqt.sound import av_player
     legacy_play = None
     from . import audios
 except (ImportError, ModuleNotFoundError):
@@ -635,10 +478,8 @@ def play_effect_sound(sound_type):
 def play_sound():
     global sounds
     if sounds is True:
-        global id, addon_dir
-        #id = search_pokedex(name.lower(), "id")
-        file_name = f"{id}.ogg"
-        #file_name = f"{name.lower()}.mp3"
+        global name, addon_dir
+        file_name = f"{name.lower()}.mp3"
         audio_path = addon_dir / "user_files" / "sprites" / "sounds" / file_name
         if audio_path.is_file():
             audio_path = Path(audio_path)
@@ -1227,7 +1068,7 @@ if database_complete != False:
         #generation_file = ("pokeapi_db.json")
         try:
             id, pokemon_species = choose_random_pkmn_from_tier()
-            #test_ids = [719]
+            #test_ids = [417]
             #id = random.choice(test_ids)
             name = search_pokedex_by_id(id)
 
@@ -1332,8 +1173,6 @@ def kill_pokemon():
     name = name.capitalize()
     exp = int(calc_experience(mainpokemon_base_experience, level))
     mainpokemon_level = save_main_pokemon_progress(mainpokemon_path, mainpokemon_level, mainpokemon_name, mainpokemon_base_experience, mainpokemon_growth_rate, exp)
-    global general_card_count_for_battle
-    general_card_count_for_battle = 0
     if pkmn_window is True:
         new_pokemon()  # Show a new random Pokémon
 
@@ -1561,15 +1400,8 @@ def find_details_move(move_name):
             if move:
                 return move
             else:
-                if move is None:
-                    move_name = move_name.replace(" ", "")
-                    try:
-                        move = moves_data.get(move_name.lower())
-                        return move
-                    except:
-                        showInfo(f"Can't find the attack {move_name} in the database.")
-                        move = moves_data.get("tackle")
-                        return move
+                showInfo(f"Move '{move_name}' not found.")
+                return None
     except FileNotFoundError:
         showInfo("Moves Data File Missing!\nPlease Download Moves Data")
         return None
@@ -1582,18 +1414,14 @@ def find_details_move(move_name):
 def save_main_pokemon_progress(mainpokemon_path, mainpokemon_level, mainpokemon_name, mainpokemon_base_experience, mainpokemon_growth_rate, exp):
     global mainpokemon_current_hp, mainpokemon_ev, ev_yield, mainpokemon_evolution, mainpokemon_xp, pop_up_dialog_message_on_defeat
     experience = find_experience_for_level(mainpokemon_growth_rate, mainpokemon_level)
-    if remove_levelcap is True:
+    if mainpokemon_level != 100:
         mainpokemon_xp += exp
-        level_cap = None
-    elif mainpokemon_level != 100:
-            mainpokemon_xp += exp
-            level_cap = 100
     if mainpokemon_path.is_file():
         with open(mainpokemon_path, "r") as json_file:
             main_pokemon_data = json.load(json_file)
     else:
         showWarning("Missing Mainpokemon Data !")
-    while int(experience) < int(mainpokemon_xp) and (level_cap is None or mainpokemon_level < level_cap):
+    while int(experience) < int(mainpokemon_xp) and mainpokemon_level != 100:
         mainpokemon_level += 1
         msg = ""
         msg += f"Your {mainpokemon_name} is now level {mainpokemon_level} !"
@@ -1967,8 +1795,6 @@ def catch_pokemon(nickname):
             save_caught_pokemon(nickname)
         else:
             save_caught_pokemon(name)
-        global general_card_count_for_battle
-        general_card_count_for_battle = 0
         msg = f"You caught {name}!"
         if pop_up_dialog_message_on_defeat is True:
             showInfo(f"{msg}") # Display a message when the Pokémon is caught
@@ -2518,15 +2344,9 @@ def on_review_card(*args):
             else:
                 if pkmn_window is True:
                     test_window.display_pokemon_death()
-                else:
-                    if automatic_battle != 0:
-                        if automatic_battle == 1:
-                            catch_pokemon("")
-                            general_card_count_for_battle = 0
-                        elif automatic_battle == 2:
-                            kill_pokemon()
-                            new_pokemon()
-                            general_card_count_for_battle = 0
+                elif pkmn_window is False:
+                    new_pokemon()
+                    general_card_count_for_battle = 0
             if pkmn_window is True:
                 if hp > 0:
                     test_window.display_first_encounter()
@@ -2537,14 +2357,8 @@ def on_review_card(*args):
             elif pkmn_window is False:
                 if hp < 1:
                     hp = 0
-                    if automatic_battle != 0:
-                        if automatic_battle == 1:
-                            catch_pokemon("")
-                            general_card_count_for_battle = 0
-                        elif automatic_battle == 2:
-                            kill_pokemon()
-                            new_pokemon()
-                            general_card_count_for_battle = 0
+                    kill_pokemon()
+                    general_card_count_for_battle = 0
             # Reset the counter
             reviewed_cards_count = 0
         if cry_counter == 10 and battle_sounds is True:
@@ -2823,8 +2637,9 @@ def status_effect(stat, name, move, hp, slp_counter, stats, msg, acc):
 gui_hooks.reviewer_did_answer_card.append(on_review_card)
 
 from PyQt6 import *
-from PyQt6.QtWidgets import QSplashScreen
 from PyQt6.QtGui import QMovie
+from PyQt6.QtWidgets import QSplashScreen
+
 
 class MovieSplashLabel(QLabel):
     def __init__(self, gif_path, parent=None):
@@ -2849,36 +2664,24 @@ class PokemonCollectionDialog(QDialog):
         self.setMinimumHeight(400)
         self.layout = QVBoxLayout(self)
 
-        #add Widget to sort by ID
-        self.sort_checkbox = QCheckBox("Sort by ID")
-        self.sort_checkbox.stateChanged.connect(lambda: self.sort_pokemon() if self.sort_checkbox.isChecked() else self.filter_pokemon())
-
         # Search Filter
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Search Pokémon (by nickname, name)")
+        self.search_edit.setPlaceholderText("Search Pokémon...")
         #self.search_edit.textChanged.connect(self.filter_pokemon)
         self.search_button = QPushButton("Search")
-        self.search_button.clicked.connect(lambda: self.sort_pokemon() if self.sort_checkbox.isChecked() else self.filter_pokemon())
+        self.search_button.clicked.connect(self.filter_pokemon)
 
         # Add dropdown menu for generation filtering
         self.generation_combo = QComboBox()
         self.generation_combo.addItem("All")
         self.generation_combo.addItems(["Generation 1", "Generation 2", "Generation 3", "Generation 4", "Generation 5", "Generation 6", "Generation 7", "Generation 8"])
-        self.generation_combo.currentIndexChanged.connect(lambda: self.sort_pokemon() if self.sort_checkbox.isChecked() else self.filter_pokemon())
-
-        # Add dropdown menu for generation filtering
-        self.type_combo = QComboBox()
-        self.type_combo.addItem("All")
-        self.type_combo.addItems(["Normal", "Fire", "Water", "Electric", "Grass", "Ice", "Fighting", "Poison", "Ground", "Flying", "Psychic", "Bug", "Rock", "Ghost", "Dragon", "Dark", "Steel", "Fairy"])
-        self.type_combo.currentIndexChanged.connect(lambda: self.sort_pokemon() if self.sort_checkbox.isChecked() else self.filter_pokemon())
+        self.generation_combo.currentIndexChanged.connect(self.filter_pokemon)
 
         # Add widgets to layout
         filter_layout = QHBoxLayout()
         filter_layout.addWidget(self.search_edit)
         filter_layout.addWidget(self.search_button)
         filter_layout.addWidget(self.generation_combo)
-        filter_layout.addWidget(self.type_combo)
-        filter_layout.addWidget(self.sort_checkbox)
         self.layout.addLayout(filter_layout)
 
         self.scroll_area = QScrollArea()
@@ -2898,10 +2701,8 @@ class PokemonCollectionDialog(QDialog):
             widget = self.scroll_layout.itemAt(i).widget()
             if widget is not None:
                 widget.deleteLater()
-        if self.sort_checkbox.isChecked():
-            self.sort_pokemon()
-        else:
-            self.setup_ui()
+        
+        self.setup_ui()
 
     def setup_ui(self):
 
@@ -2910,7 +2711,7 @@ class PokemonCollectionDialog(QDialog):
                 captured_pokemon_data = json.load(json_file)
                 if captured_pokemon_data:
                     row, column = 0, 0
-                    for position, pokemon in enumerate(captured_pokemon_data):
+                    for pokemon in captured_pokemon_data:
                         pokemon_container = QWidget()
                         image_label = QLabel()
                         pixmap = QPixmap()
@@ -2999,9 +2800,9 @@ class PokemonCollectionDialog(QDialog):
                         pokemon_button = QPushButton("Show me Details")
                         pokemon_button.setIconSize(pixmap.size())
                         if len(pokemon_type) > 1:
-                            pokemon_button.clicked.connect(lambda state, name=pokemon_name, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=[pokemon_type[0], pokemon_type[1]], detail_stats=pokemon_stats, attacks=pokemon_attacks, base_experience=pokemon_base_experience, growth_rate=pokemon_growth_rate, description=pokemon_description, gender=pokemon_gender, nickname=pokemon_nickname, position=position: PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname, position))
+                            pokemon_button.clicked.connect(lambda state, name=pokemon_name, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=[pokemon_type[0], pokemon_type[1]], detail_stats=pokemon_stats, attacks=pokemon_attacks, base_experience=pokemon_base_experience, growth_rate=pokemon_growth_rate, description=pokemon_description, gender=pokemon_gender, nickname=pokemon_nickname: PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname))
                         else:
-                            pokemon_button.clicked.connect(lambda state, name=pokemon_name, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=[pokemon_type[0]], detail_stats=pokemon_stats, attacks=pokemon_attacks, base_experience=pokemon_base_experience, growth_rate=pokemon_growth_rate, description=pokemon_description, gender=pokemon_gender, nickname=pokemon_nickname, position=position: PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname, position))
+                            pokemon_button.clicked.connect(lambda state, name=pokemon_name, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=[pokemon_type[0]], detail_stats=pokemon_stats, attacks=pokemon_attacks, base_experience=pokemon_base_experience, growth_rate=pokemon_growth_rate, description=pokemon_description, gender=pokemon_gender, nickname=pokemon_nickname: PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname))
 
                         choose_pokemon_button = QPushButton("Pick as main Pokemon")
                         choose_pokemon_button.setIconSize(pixmap.size())
@@ -3043,184 +2844,9 @@ class PokemonCollectionDialog(QDialog):
             self.layout.addWidget(QLabel(f"Can't open the Saving File. {mypokemon_path}"))
 
     def filter_pokemon(self):
-        if not self.sort_checkbox.isChecked():
-            type_index = self.type_combo.currentIndex()
-            type_text = self.type_combo.currentText()
-            search_text = self.search_edit.text().lower()
-            generation_index = self.generation_combo.currentIndex()
-            # Clear previous contents
-            for i in reversed(range(self.scroll_layout.count())):
-                widget = self.scroll_layout.itemAt(i).widget()
-                if widget is not None:
-                    widget.deleteLater()
-            try:
-                with open(mypokemon_path, "r") as json_file:
-                    captured_pokemon_data = json.load(json_file)
-                    if captured_pokemon_data:
-                        row, column = 0, 0
-                        for position, pokemon in enumerate(captured_pokemon_data):
-                            pokemon_id = pokemon['id']
-                            pokemon_name = pokemon['name'].lower()
-                            pokemon_nickname = pokemon.get("nickname", None)
-                            pokemon_type = pokemon.get("type", " ")
-                            # Check if the Pokémon matches the search text and generation filter
-                            if (
-                                search_text.lower() in pokemon_name.lower() or 
-                                (pokemon_nickname is not None and search_text.lower() in pokemon_nickname.lower())
-                            ) and \
-                            0 <= generation_index <= 8 and \
-                            (
-                                generation_index == 0 or
-                                (1 <= pokemon_id <= 151 and generation_index == 1) or
-                                (152 <= pokemon_id <= 251 and generation_index == 2) or
-                                (252 <= pokemon_id <= 386 and generation_index == 3) or
-                                (387 <= pokemon_id <= 493 and generation_index == 4) or
-                                (494 <= pokemon_id <= 649 and generation_index == 5) or
-                                (650 <= pokemon_id <= 721 and generation_index == 6) or
-                                (722 <= pokemon_id <= 809 and generation_index == 7) or
-                                (810 <= pokemon_id <= 898 and generation_index == 8)
-                            ) and \
-                            (
-                                type_index == 0 or type_text in pokemon_type
-                            ):
-
-                                # Display the Pokémon
-                                pokemon_container = QWidget()
-                                image_label = QLabel()
-                                pixmap = QPixmap()
-                                pokemon_id = pokemon['id']
-                                pokemon_name = pokemon['name']
-                                if not pokemon.get('nickname') or pokemon.get('nickname') is None:
-                                    pokemon_nickname = None
-                                else:
-                                    pokemon_nickname = pokemon['nickname']
-                                pokemon_gender = pokemon['gender']
-                                pokemon_level = pokemon['level']
-                                pokemon_ability = pokemon['ability']
-                                pokemon_stats = pokemon['stats']
-                                pokemon_hp = pokemon_stats["hp"],
-                                pokemon_attacks = pokemon['attacks']
-                                pokemon_base_experience = pokemon['base_experience']
-                                pokemon_growth_rate = pokemon['growth_rate']
-                                pokemon_ev = pokemon['ev']
-                                pokemon_iv = pokemon['iv']
-                                pokemon_description = search_pokeapi_db_by_id(pokemon_id, "description")
-                                if gif_in_collection is True:
-                                    pkmn_image_path = str(user_path_sprites / "front_default_gif" / f"{pokemon_id}.gif")
-                                    splash_label = MovieSplashLabel(pkmn_image_path)
-                                else:
-                                    pkmn_image_path = str(frontdefault / f"{pokemon_id}.png")
-                                pixmap.load(pkmn_image_path)
-
-                                # Calculate the new dimensions to maintain the aspect ratio
-                                max_width = 300
-                                max_height = 230
-                                original_width = pixmap.width()
-                                original_height = pixmap.height()
-
-                                if original_width > max_width:
-                                    new_width = max_width
-                                    new_height = (original_height * max_width) // original_width
-                                    pixmap = pixmap.scaled(new_width, new_height)
-
-                                painter = QPainter(pixmap)
-
-                                if pokemon_gender == "M":
-                                    gender_symbol = "♂"
-                                elif pokemon_gender == "F":
-                                    gender_symbol = "♀"
-                                elif pokemon_gender == "N":
-                                    gender_symbol = ""
-                                else:
-                                    gender_symbol = ""
-
-                                if pokemon_nickname is None:
-                                    capitalized_name = f"{get_pokemon_diff_lang_name(int(pokemon_id)).capitalize()} {gender_symbol}"
-                                else:
-                                    capitalized_name = f"{pokemon_nickname.capitalize()} {gender_symbol}"
-                                lvl = (f" Level: {pokemon_level}")
-                                type_txt = "Type: "
-                                for type in pokemon_type:
-                                    type_txt += f" {type.capitalize()}"
-                                ability_txt = (f" Ability: {pokemon_ability.capitalize()}")
-
-                                font = QFont()
-                                font.setPointSize(12)
-                                painter.setFont(font)
-                                fontpkmnspec = QFont()
-                                fontpkmnspec.setPointSize(8)
-                                painter.end()
-
-                                name_label = QLabel(capitalized_name)
-                                name_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                                name_label.setFont(font)
-
-                                level_label = QLabel(lvl)
-                                level_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                                level_label.setFont(fontpkmnspec)
-
-                                type_label = QLabel(type_txt)
-                                type_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                                type_label.setFont(fontpkmnspec)
-
-                                ability_label = QLabel(ability_txt)
-                                ability_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                                ability_label.setFont(fontpkmnspec)
-
-                                image_label.setPixmap(pixmap)
-
-                                pokemon_button = QPushButton("Show me Details")
-                                pokemon_button.setIconSize(pixmap.size())
-                                if len(pokemon_type) > 1:
-                                    pokemon_button.clicked.connect(lambda state, name=pokemon_name, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=[pokemon_type[0], pokemon_type[1]], detail_stats=pokemon_stats, attacks=pokemon_attacks, base_experience=pokemon_base_experience, growth_rate=pokemon_growth_rate, description=pokemon_description, gender=pokemon_gender, nickname=pokemon_nickname, position=position: PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname, position))
-                                else:
-                                    pokemon_button.clicked.connect(lambda state, name=pokemon_name, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=[pokemon_type[0]], detail_stats=pokemon_stats, attacks=pokemon_attacks, base_experience=pokemon_base_experience, growth_rate=pokemon_growth_rate, description=pokemon_description, gender=pokemon_gender, nickname=pokemon_nickname, position=position: PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname, position))
-
-                                choose_pokemon_button = QPushButton("Pick as main Pokemon")
-                                choose_pokemon_button.setIconSize(pixmap.size())
-                                choose_pokemon_button.clicked.connect(lambda state, name=pokemon_name, nickname=pokemon_nickname, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=pokemon_type, detail_stats=pokemon_stats, attacks=pokemon_attacks, hp=pokemon_hp, base_experience=mainpokemon_base_experience, growth_rate=pokemon_growth_rate, ev=pokemon_ev, iv=pokemon_iv, gender=pokemon_gender: MainPokemon(name, nickname, level, id, ability, type, detail_stats, attacks, hp, base_experience, growth_rate, ev, iv, gender))
-
-                                container_layout = QVBoxLayout()
-                                container_layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
-                                if gif_in_collection is True:
-                                    container_layout.addWidget(splash_label)
-                                    splash_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                                else:
-                                    container_layout.addWidget(image_label)
-                                    image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                                container_layout.addWidget(name_label)
-                                container_layout.addWidget(level_label)
-                                container_layout.addWidget(type_label)
-                                container_layout.addWidget(ability_label)
-                                container_layout.addWidget(pokemon_button)
-                                container_layout.addWidget(choose_pokemon_button)
-                                type_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                                name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                                level_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                                ability_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-                                pokemon_container.setLayout(container_layout)
-                                self.scroll_layout.addWidget(pokemon_container, row, column)
-                                column += 1
-                                if column >= 3:
-                                    column = 0
-                                    row += 1
-                        self.container.setLayout(self.scroll_layout)
-                        self.scroll_area.setWidget(self.container)
-                        self.layout.addWidget(self.scroll_area)
-                        self.setLayout(self.layout)                        
-                    else:
-                        self.layout.addWidget(QLabel("You haven't captured any Pokémon yet."))
-            except FileNotFoundError:
-                self.layout.addWidget(QLabel(f"Can't open the Saving File. {mypokemon_path}"))
-        else:
-            self.sort_pokemon()
-    
-    def sort_pokemon(self):
         search_text = self.search_edit.text().lower()
         generation_index = self.generation_combo.currentIndex()
-        type_index = self.type_combo.currentIndex()
-        type_text = self.type_combo.currentText()
+        # Clear previous contents
         for i in reversed(range(self.scroll_layout.count())):
             widget = self.scroll_layout.itemAt(i).widget()
             if widget is not None:
@@ -3228,174 +2854,168 @@ class PokemonCollectionDialog(QDialog):
         try:
             with open(mypokemon_path, "r") as json_file:
                 captured_pokemon_data = json.load(json_file)
-                pokemon_widgets = []
+                if captured_pokemon_data:
+                    row, column = 0, 0
+                    for pokemon in captured_pokemon_data:
+                        pokemon_id = pokemon['id']
+                        pokemon_name = pokemon['name'].lower()
+                        pokemon_nickname = pokemon.get("nickname", None)
+                        # Check if the Pokémon matches the search text and generation filter
+                        if (search_text.lower() in pokemon_name.lower() or 
+                            (pokemon_nickname is not None and search_text.lower() in pokemon_nickname.lower())) and \
+                            0 <= generation_index <= 8 and \
+                            ((generation_index == 0) or 
+                            (1 <= pokemon_id <= 151 and generation_index == 1) or
+                            (152 <= pokemon_id <= 251 and generation_index == 2) or
+                            (252 <= pokemon_id <= 386 and generation_index == 3) or
+                            (387 <= pokemon_id <= 493 and generation_index == 4) or
+                            (494 <= pokemon_id <= 649 and generation_index == 5) or
+                            (650 <= pokemon_id <= 721 and generation_index == 6) or
+                            (722 <= pokemon_id <= 809 and generation_index == 7) or
+                            (810 <= pokemon_id <= 898 and generation_index == 8)):
 
-                for position, pokemon in enumerate(captured_pokemon_data):
-                    pokemon_id = pokemon['id']
-                    pokemon_name = pokemon['name'].lower()
-                    pokemon_nickname = pokemon.get("nickname", None)
-                    pokemon_type = pokemon.get("type", " ")
-                    # Check if the Pokémon matches the search text and generation filter
-                    if (
-                        search_text.lower() in pokemon_name.lower() or 
-                        (pokemon_nickname is not None and search_text.lower() in pokemon_nickname.lower())
-                    ) and \
-                    0 <= generation_index <= 8 and \
-                    (
-                        generation_index == 0 or
-                        (1 <= pokemon_id <= 151 and generation_index == 1) or
-                        (152 <= pokemon_id <= 251 and generation_index == 2) or
-                        (252 <= pokemon_id <= 386 and generation_index == 3) or
-                        (387 <= pokemon_id <= 493 and generation_index == 4) or
-                        (494 <= pokemon_id <= 649 and generation_index == 5) or
-                        (650 <= pokemon_id <= 721 and generation_index == 6) or
-                        (722 <= pokemon_id <= 809 and generation_index == 7) or
-                        (810 <= pokemon_id <= 898 and generation_index == 8)
-                    ) and \
-                    (
-                        type_index == 0 or type_text in pokemon_type
-                    ):
+                            # Display the Pokémon
+                            pokemon_container = QWidget()
+                            image_label = QLabel()
+                            pixmap = QPixmap()
+                            pokemon_id = pokemon['id']
+                            pokemon_name = pokemon['name']
+                            if not pokemon.get('nickname') or pokemon.get('nickname') is None:
+                                pokemon_nickname = None
+                            else:
+                                pokemon_nickname = pokemon['nickname']
+                            pokemon_gender = pokemon['gender']
+                            pokemon_level = pokemon['level']
+                            pokemon_ability = pokemon['ability']
+                            pokemon_type = pokemon['type']
+                            pokemon_stats = pokemon['stats']
+                            pokemon_hp = pokemon_stats["hp"],
+                            pokemon_attacks = pokemon['attacks']
+                            pokemon_base_experience = pokemon['base_experience']
+                            pokemon_growth_rate = pokemon['growth_rate']
+                            pokemon_ev = pokemon['ev']
+                            pokemon_iv = pokemon['iv']
+                            pokemon_description = search_pokeapi_db_by_id(pokemon_id, "description")
+                            if gif_in_collection is True:
+                                pkmn_image_path = str(user_path_sprites / "front_default_gif" / f"{pokemon_id}.gif")
+                                splash_label = MovieSplashLabel(pkmn_image_path)
+                            else:
+                                pkmn_image_path = str(frontdefault / f"{pokemon_id}.png")
+                            pixmap.load(pkmn_image_path)
 
-                        # Create the Pokémon widget
-                        pokemon_container = QWidget()
-                        image_label = QLabel()
-                        pixmap = QPixmap()
-                        pokemon_name = pokemon['name']
-                        pokemon_nickname = pokemon.get('nickname')
-                        pokemon_gender = pokemon['gender']
-                        pokemon_level = pokemon['level']
-                        pokemon_ability = pokemon['ability']
-                        pokemon_stats = pokemon['stats']
-                        pokemon_hp = pokemon_stats["hp"]
-                        pokemon_attacks = pokemon['attacks']
-                        pokemon_base_experience = pokemon['base_experience']
-                        pokemon_growth_rate = pokemon['growth_rate']
-                        pokemon_ev = pokemon['ev']
-                        pokemon_iv = pokemon['iv']
-                        pokemon_description = search_pokeapi_db_by_id(pokemon_id, "description")
+                            # Calculate the new dimensions to maintain the aspect ratio
+                            max_width = 300
+                            max_height = 230
+                            original_width = pixmap.width()
+                            original_height = pixmap.height()
 
-                        if gif_in_collection:
-                            pkmn_image_path = str(user_path_sprites / "front_default_gif" / f"{pokemon_id}.gif")
-                            splash_label = MovieSplashLabel(pkmn_image_path)
-                        else:
-                            pkmn_image_path = str(frontdefault / f"{pokemon_id}.png")
-                        pixmap.load(pkmn_image_path)
+                            if original_width > max_width:
+                                new_width = max_width
+                                new_height = (original_height * max_width) // original_width
+                                pixmap = pixmap.scaled(new_width, new_height)
 
-                        # Calculate the new dimensions to maintain the aspect ratio
-                        max_width = 300
-                        max_height = 230
-                        original_width = pixmap.width()
-                        original_height = pixmap.height()
+                            painter = QPainter(pixmap)
 
-                        if original_width > max_width:
-                            new_width = max_width
-                            new_height = (original_height * max_width) // original_width
-                            pixmap = pixmap.scaled(new_width, new_height)
+                            if pokemon_gender == "M":
+                                gender_symbol = "♂"
+                            elif pokemon_gender == "F":
+                                gender_symbol = "♀"
+                            elif pokemon_gender == "N":
+                                gender_symbol = ""
+                            else:
+                                gender_symbol = ""
 
-                        painter = QPainter(pixmap)
+                            if pokemon_nickname is None:
+                                capitalized_name = f"{get_pokemon_diff_lang_name(int(pokemon_id)).capitalize()} {gender_symbol}"
+                            else:
+                                capitalized_name = f"{pokemon_nickname.capitalize()} {gender_symbol}"
+                            lvl = (f" Level: {pokemon_level}")
+                            type_txt = "Type: "
+                            for type in pokemon_type:
+                                type_txt += f" {type.capitalize()}"
+                            ability_txt = (f" Ability: {pokemon_ability.capitalize()}")
 
-                        gender_symbol = ""
-                        if pokemon_gender == "M":
-                            gender_symbol = "♂"
-                        elif pokemon_gender == "F":
-                            gender_symbol = "♀"
+                            font = QFont()
+                            font.setPointSize(12)
+                            painter.setFont(font)
+                            fontpkmnspec = QFont()
+                            fontpkmnspec.setPointSize(8)
+                            painter.end()
 
-                        capitalized_name = f"{pokemon_nickname.capitalize() if pokemon_nickname else get_pokemon_diff_lang_name(int(pokemon_id)).capitalize()} {gender_symbol}"
-                        lvl = f" Level: {pokemon_level}"
-                        type_txt = "Type: " + " ".join(type.capitalize() for type in pokemon_type)
-                        ability_txt = f" Ability: {pokemon_ability.capitalize()}"
+                            name_label = QLabel(capitalized_name)
+                            name_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                            name_label.setFont(font)
 
-                        font = QFont()
-                        font.setPointSize(12)
-                        painter.setFont(font)
-                        fontpkmnspec = QFont()
-                        fontpkmnspec.setPointSize(8)
-                        painter.end()
+                            level_label = QLabel(lvl)
+                            level_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                            level_label.setFont(fontpkmnspec)
 
-                        name_label = QLabel(capitalized_name)
-                        name_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                        name_label.setFont(font)
+                            type_label = QLabel(type_txt)
+                            type_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                            type_label.setFont(fontpkmnspec)
 
-                        level_label = QLabel(lvl)
-                        level_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                        level_label.setFont(fontpkmnspec)
+                            ability_label = QLabel(ability_txt)
+                            ability_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                            ability_label.setFont(fontpkmnspec)
 
-                        type_label = QLabel(type_txt)
-                        type_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                        type_label.setFont(fontpkmnspec)
+                            image_label.setPixmap(pixmap)
 
-                        ability_label = QLabel(ability_txt)
-                        ability_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                        ability_label.setFont(fontpkmnspec)
+                            pokemon_button = QPushButton("Show me Details")
+                            pokemon_button.setIconSize(pixmap.size())
+                            if len(pokemon_type) > 1:
+                                pokemon_button.clicked.connect(lambda state, name=pokemon_name, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=[pokemon_type[0], pokemon_type[1]], detail_stats=pokemon_stats, attacks=pokemon_attacks, base_experience=pokemon_base_experience, growth_rate=pokemon_growth_rate, description=pokemon_description, gender=pokemon_gender, nickname=pokemon_nickname: PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname))
+                            else:
+                                pokemon_button.clicked.connect(lambda state, name=pokemon_name, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=[pokemon_type[0]], detail_stats=pokemon_stats, attacks=pokemon_attacks, base_experience=pokemon_base_experience, growth_rate=pokemon_growth_rate, description=pokemon_description, gender=pokemon_gender, nickname=pokemon_nickname: PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname))
 
-                        image_label.setPixmap(pixmap)
+                            choose_pokemon_button = QPushButton("Pick as main Pokemon")
+                            choose_pokemon_button.setIconSize(pixmap.size())
+                            choose_pokemon_button.clicked.connect(lambda state, name=pokemon_name, nickname=pokemon_nickname, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=pokemon_type, detail_stats=pokemon_stats, attacks=pokemon_attacks, hp=pokemon_hp, base_experience=mainpokemon_base_experience, growth_rate=pokemon_growth_rate, ev=pokemon_ev, iv=pokemon_iv, gender=pokemon_gender: MainPokemon(name, nickname, level, id, ability, type, detail_stats, attacks, hp, base_experience, growth_rate, ev, iv, gender))
 
-                        pokemon_button = QPushButton("Show me Details")
-                        pokemon_button.setIconSize(pixmap.size())
-                        if len(pokemon_type) > 1:
-                            pokemon_button.clicked.connect(lambda state, name=pokemon_name, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=[pokemon_type[0], pokemon_type[1]], detail_stats=pokemon_stats, attacks=pokemon_attacks, base_experience=pokemon_base_experience, growth_rate=pokemon_growth_rate, description=pokemon_description, gender=pokemon_gender, nickname=pokemon_nickname, position=position: PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname, position))
-                        else:
-                            pokemon_button.clicked.connect(lambda state, name=pokemon_name, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=[pokemon_type[0]], detail_stats=pokemon_stats, attacks=pokemon_attacks, base_experience=pokemon_base_experience, growth_rate=pokemon_growth_rate, description=pokemon_description, gender=pokemon_gender, nickname=pokemon_nickname, position=position: PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname, position))
+                            container_layout = QVBoxLayout()
+                            container_layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+                            if gif_in_collection is True:
+                                container_layout.addWidget(splash_label)
+                                splash_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                            else:
+                                container_layout.addWidget(image_label)
+                                image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                            container_layout.addWidget(name_label)
+                            container_layout.addWidget(level_label)
+                            container_layout.addWidget(type_label)
+                            container_layout.addWidget(ability_label)
+                            container_layout.addWidget(pokemon_button)
+                            container_layout.addWidget(choose_pokemon_button)
+                            type_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                            name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                            level_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                            ability_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-                        choose_pokemon_button = QPushButton("Pick as main Pokemon")
-                        choose_pokemon_button.setIconSize(pixmap.size())
-                        choose_pokemon_button.clicked.connect(lambda state, name=pokemon_name, nickname=pokemon_nickname, level=pokemon_level, id=pokemon_id, ability=pokemon_ability, type=pokemon_type, detail_stats=pokemon_stats, attacks=pokemon_attacks, hp=pokemon_hp, base_experience=mainpokemon_base_experience, growth_rate=pokemon_growth_rate, ev=pokemon_ev, iv=pokemon_iv, gender=pokemon_gender: MainPokemon(name, nickname, level, id, ability, type, detail_stats, attacks, hp, base_experience, growth_rate, ev, iv, gender))
-
-                        container_layout = QVBoxLayout()
-                        container_layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
-                        if gif_in_collection is True:
-                            container_layout.addWidget(splash_label)
-                            splash_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                        else:
-                            container_layout.addWidget(image_label)
-                            image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                        container_layout.addWidget(name_label)
-                        container_layout.addWidget(level_label)
-                        container_layout.addWidget(type_label)
-                        container_layout.addWidget(ability_label)
-                        container_layout.addWidget(pokemon_button)
-                        container_layout.addWidget(choose_pokemon_button)
-                        type_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                        level_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                        ability_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-                        pokemon_container.setLayout(container_layout)
-                        
-                        # Append to the list with its id
-                        pokemon_widgets.append((pokemon_id, pokemon_container))
-                
-                # Sort the widgets by pokemon id
-                pokemon_widgets.sort(key=lambda x: x[0])
-                
-                # Add the sorted widgets to the layout
-                row = 0
-                column = 0
-                for _, widget in pokemon_widgets:
-                    self.scroll_layout.addWidget(widget, row, column)
-                    column += 1
-                    if column >= 3:
-                        column = 0
-                        row += 1
-
-                self.container.setLayout(self.scroll_layout)
-                self.scroll_area.setWidget(self.container)
-                self.layout.addWidget(self.scroll_area)
-                self.setLayout(self.layout)
+                            pokemon_container.setLayout(container_layout)
+                            self.scroll_layout.addWidget(pokemon_container, row, column)
+                            column += 1
+                            if column >= 3:
+                                column = 0
+                                row += 1
+                    self.container.setLayout(self.scroll_layout)
+                    self.scroll_area.setWidget(self.container)
+                    self.layout.addWidget(self.scroll_area)
+                    self.setLayout(self.layout)                        
+                else:
+                    self.layout.addWidget(QLabel("You haven't captured any Pokémon yet."))
         except FileNotFoundError:
             self.layout.addWidget(QLabel(f"Can't open the Saving File. {mypokemon_path}"))
 
 
 pokecollection_win = PokemonCollectionDialog()
 
-def rename_pkmn(nickname, pkmn_name, position):
+def rename_pkmn(nickname, pkmn_name):
     try:
         with open(mypokemon_path, "r") as json_file:
             captured_pokemon_data = json.load(json_file)
             pokemon = None
             if captured_pokemon_data:
-                for index, pokemon_data in enumerate(captured_pokemon_data):
-                    if index == position:
+                for pokemon_data in captured_pokemon_data:
+                    if pokemon_data['name'] == pkmn_name:
                         pokemon = pokemon_data
                         if pokemon is not None:
                             pokemon["nickname"] = nickname
@@ -3404,8 +3024,9 @@ def rename_pkmn(nickname, pkmn_name, position):
                                 mypokemondata = json.load(output_file)
                                 # Find and replace the specified Pokémon's data in mypokemondata
                                 for index, pokemon_data in enumerate(mypokemondata):
-                                    mypokemondata[position] = pokemon
-                                    break
+                                    if pokemon_data["name"] == pkmn_name:
+                                        mypokemondata[index] = pokemon
+                                        break
                                         # Save the modified data to the output JSON file
                                 with open(str(mypokemon_path), "w") as output_file:
                                     json.dump(mypokemondata, output_file, indent=2)
@@ -3414,7 +3035,7 @@ def rename_pkmn(nickname, pkmn_name, position):
     except Exception as e:
         showWarning(f"An error occured: {e}")
 
-def PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname, position):
+def PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attacks, base_experience, growth_rate, description, gender, nickname):
     global frontdefault, type_style_file, language, icon_path, gif_in_collection
     # Create the dialog
     try:
@@ -3467,7 +3088,7 @@ def PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attac
         painter2 = QPainter(pkmnpixmap)
 
         #custom font
-        custom_font = load_custom_font(int(20))
+        custom_font = load_custom_font(20)
 
         # Capitalize the first letter of the Pokémon's name
         if nickname is None:
@@ -3518,10 +3139,10 @@ def PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attac
 
         # Properties of the text of the image
         # custom font
-        namefont = load_custom_font(int(30))
+        namefont = load_custom_font(30)
         namefont.setUnderline(True)
         painter2.setFont(namefont)
-        font = load_custom_font(int(20))
+        font = load_custom_font(20)
         painter2.end()
 
         # Convert gender name to symbol - this function is from Foxy-null
@@ -3554,9 +3175,9 @@ def PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attac
         attacks_label.setFont(font)
         growth_rate_label.setFont(font)
         if language == 1:
-            description_font = load_custom_font(int(20))
+            description_font = load_custom_font(20)
         else:
-            description_font = load_custom_font(int(15))
+            description_font = load_custom_font(15)
         description_label.setFont(description_font)
         #stats_label = QLabel(stats_txt)
 
@@ -3632,15 +3253,15 @@ def PokemonCollectionDetails(name, level, id, ability, type, detail_stats, attac
         #statstablelayout.setFixedWidth(350)
         statstablelayout.setFixedHeight(200)
         free_pokemon_button = QPushButton("Release Pokemon") #add Details to Moves
-        qconnect(free_pokemon_button.clicked, lambda: PokemonFree(position, name))
+        qconnect(free_pokemon_button.clicked, lambda: PokemonFree(name))
         trade_pokemon_button = QPushButton("Trade Pokemon") #add Details to Moves
-        qconnect(trade_pokemon_button.clicked, lambda: PokemonTrade(name, id, level, ability, iv, ev, gender, attacks, position))
+        qconnect(trade_pokemon_button.clicked, lambda: PokemonTrade(name, id, level, ability, iv, ev, gender, attacks))
         layout.addWidget(trade_pokemon_button)
         layout.addWidget(free_pokemon_button)
         rename_button = QPushButton("Rename Pokemon") #add Details to Moves
         rename_input = QLineEdit()
         rename_input.setPlaceholderText("Enter a new Nickname for your Pokemon")
-        qconnect(rename_button.clicked, lambda: rename_pkmn(rename_input.text(),name, position))
+        qconnect(rename_button.clicked, lambda: rename_pkmn(rename_input.text(),name))
         layout.addWidget(rename_input)
         layout.addWidget(rename_button)
         #qconnect()
@@ -3735,13 +3356,7 @@ def attack_details_window(attacks):
     # Loop through the list of attacks and add them to the HTML content
     for attack in attacks:
         move = find_details_move(attack)
-        if move is None:
-            attack = attack.replace(" ", "")
-            try:
-                move = find_details_move(attack)
-            except:
-                showInfo(f"Can't find the attack {attack} in the database.")
-                move = find_details_move("tackle")
+
         html_content += f"""
         <tr>
           <td class="move-name">{move['name']}</td>
@@ -4048,7 +3663,7 @@ def PokemonDetailsStats(detail_stats, growth_rate, level):
     }
 
     #custom font
-    custom_font = load_custom_font(int(20))
+    custom_font = load_custom_font(20)
 
     # Populate the table and create the stat bars
     for row, (stat, value) in enumerate(detail_stats.items()):
@@ -4085,16 +3700,16 @@ def PokemonDetailsStats(detail_stats, growth_rate, level):
 
     return CompleteTable_layout
 
-def PokemonTrade(name, id, level, ability, iv, ev, gender, attacks, position):
+def PokemonTrade(name, id, level, ability, iv, ev, gender, attacks):
     global addon_dir
     global mainpokemon_path
      # Load the data from the file
     with open(mainpokemon_path, 'r') as file:
         pokemon_data = json.load(file)
-    #check if player tries to trade mainpokemon
+
     found = False
     for pokemons in pokemon_data:
-        if pokemons["name"] == name and pokemons["id"] == id and pokemons["level"] == level and pokemons["ability"] == ability and pokemons["iv"] == iv and pokemons["ev"] == ev and pokemons["gender"] == gender and pokemons["attacks"] == attacks:
+        if pokemons["name"] == name:
             found = True
             break
 
@@ -4125,7 +3740,7 @@ def PokemonTrade(name, id, level, ability, iv, ev, gender, attacks, position):
 
         # Create a button to save the input
         trade_button = QPushButton("Trade Pokemon")
-        qconnect(trade_button.clicked, lambda: PokemonTradeIn(trade_code_input.text(), name, position))
+        qconnect(trade_button.clicked, lambda: PokemonTradeIn(trade_code_input.text(), name))
         # Information label
         info = "Pokemon Infos have been Copied to your Clipboard! \nNow simply paste this text into Teambuilder in PokemonShowdown. \nNote: Fight in the [Gen 9] Anything Goes - Battle Mode"
 
@@ -4221,7 +3836,7 @@ def find_pokemon_by_id(pokemon_id):
     except json.JSONDecodeError as e:
         showInfo(f"Error decoding JSON: {e}")
 
-def trade_pokemon(old_pokemon_name, pokemon_trade, position):
+def trade_pokemon(old_pokemon_name, pokemon_trade):
     global mypokemon_path
     try:
         # Load the current list of Pokemon
@@ -4236,8 +3851,9 @@ def trade_pokemon(old_pokemon_name, pokemon_trade, position):
 
     # Find and replace the specific Pokemon's information
     for i, pokemon in enumerate(pokemon_list):
-        pokemon_list[position] = pokemon_trade  # Replace with new Pokemon data
-        break
+        if pokemon["name"].lower() == old_pokemon_name.lower():
+            pokemon_list[i] = pokemon_trade  # Replace with new Pokemon data
+            break
     else:
         showInfo(f"Pokemon named '{old_pokemon_name}' not found.")
         return
@@ -4250,7 +3866,19 @@ def trade_pokemon(old_pokemon_name, pokemon_trade, position):
     except Exception as e:
         showInfo(f"An error occurred while writing to the file: {e}")
 
-def PokemonTradeIn(number_code, old_pokemon_name, position):
+    global mainpokemon_path
+    # Load the data from the file
+    with open(mainpokemon_path, 'r') as file:
+        pokemons = json.load(file)
+
+    # Find and remove the Pokemon with the given name
+    pokemons = [p for p in pokemons if p['name'] != old_pokemon_name]
+
+    # Write the updated data back to the file
+    with open(mainpokemon_path, 'w') as file:
+        json.dump(pokemons, file, indent=4)
+
+def PokemonTradeIn(number_code, old_pokemon_name):
     if len(number_code) > 15:
         global addon_dir
         # Split the string into a list of integers
@@ -4323,13 +3951,13 @@ def PokemonTradeIn(number_code, old_pokemon_name, position):
         # Write the updated data back to the file
         #with open(mypokemon_path, 'w') as file:
         #    json.dump(pokemon_list, file, indent=2)
-        trade_pokemon(f"{old_pokemon_name}", pokemon_trade, position)
+        trade_pokemon(f"{old_pokemon_name}", pokemon_trade)
         showInfo(f"You have sucessfully traded your {old_pokemon_name} for {name} ")
     else:
         showWarning("Please enter a valid Code !")
 
 
-def PokemonFree(position, name):
+def PokemonFree(name):
     global mypokemon_path
     global mainpokemon_path
 
@@ -4358,14 +3986,12 @@ def PokemonFree(position, name):
             pokemon_list = json.load(file)
 
         # Find and remove the Pokemon with the given name
-        #pokemon_list = [p for p in pokemon_list if p['name'] != name]
-        pokemon_list.pop(position)
+        pokemon_list = [p for p in pokemon_list if p['name'] != name]
 
         # Write the updated data back to the file
         with open(mypokemon_path, 'w') as file:
             json.dump(pokemon_list, file, indent=2)
         showInfo(f"{name.capitalize()} has been let free.")
-        pokecollection_win.refresh_pokemon_collection()
     else:
         showWarning("You can't free your Main Pokemon!")
 
@@ -4408,15 +4034,14 @@ def load_custom_font(font_size):
     # Register the custom font with its file path
     QFontDatabase.addApplicationFont(str(font_path / font_file))
     custom_font = QFont(font_name)  # Use the font family name you specified in the font file
-    custom_font.setPointSize(int(font_size))  # Adjust the font size as needed
+    custom_font.setPointSize(font_size)  # Adjust the font size as needed
 
     return custom_font
 
 #test functions
 
 def find_experience_for_level(group_growth_rate, level):
-    global remove_levelcap
-    if level > 100 and remove_levelcap is False:
+    if level > 100:
     	level = 100
     if group_growth_rate == "medium":
         group_growth_rate = "medium-fast"
@@ -4427,50 +4052,52 @@ def find_experience_for_level(group_growth_rate, level):
     global next_lvl_file_path
     # Specify the growth rate and level you're interested in
     growth_rate = f'{group_growth_rate}'
-    if level < 100:
-        # Open the CSV file
-        csv_file_path = str(next_lvl_file_path)  # Replace 'your_file_path.csv' with the actual path to your CSV file
-        with open(csv_file_path, 'r', encoding='utf-8') as file:
-            # Create a CSV reader
-            csv_reader = csv.DictReader(file, delimiter=';')
+    # Open the CSV file
+    csv_file_path = str(next_lvl_file_path)  # Replace 'your_file_path.csv' with the actual path to your CSV file
+    with open(csv_file_path, 'r', encoding='utf-8') as file:
+        # Create a CSV reader
+        csv_reader = csv.DictReader(file, delimiter=';')
 
-            # Get the fieldnames from the CSV file
-            fieldnames = [field.strip() for field in csv_reader.fieldnames]
+        # Get the fieldnames from the CSV file
+        fieldnames = [field.strip() for field in csv_reader.fieldnames]
 
-            # Iterate through rows and find the experience for the specified growth rate and level
-            for row in csv_reader:
-                if row[fieldnames[0]] == str(level):  # Use the first fieldname to access the 'Level' column
-                    experience = row[growth_rate]
-                    break
+        # Iterate through rows and find the experience for the specified growth rate and level
+        for row in csv_reader:
+            if row[fieldnames[0]] == str(level):  # Use the first fieldname to access the 'Level' column
+                experience = row[growth_rate]
+                break
 
-            return experience
-    elif level > 99:
-        if group_growth_rate == "erractic":
-            if level < 50:
-                experience = (level ** 3) * (100 - level) // 50
-            elif 50 <= level < 68:
-                experience = (level ** 3) * (150 - level) // 100
-            elif 68 <= level:
-                experience = (level ** 3) * (1911 - 10 * level) // 500
-            else:
-                experience = (level ** 3) * (160 - level) // 100
-        elif group_growth_rate == "fluctuating":
-            if level < 15:
-                experience = (level ** 3) * (level // 3 + 24) // 50
-            elif 15 <= level < 36:
-                experience = (level ** 3) * (level + 14) // 50
-            elif 36 <= level:
-                experience = (level ** 3) * (level // 2 + 32) // 50
-        elif group_growth_rate == "fast":
-            experience = (4 * (level ** 3)) // 5
-        elif group_growth_rate == "medium-fast":
-            experience = level ** 3
-        elif group_growth_rate == "medium":
-            experience = level ** 3
-        elif group_growth_rate == "medium-slow":
-            experience = (6 * (level ** 3)) // 5 - 15 * (level ** 2) + 100 * level - 140
-        elif group_growth_rate == "slow":
-            experience = (5 * (level ** 3)) // 4
+        return experience
+
+def find_experience_for_mainpokemon():
+    global next_lvl_file_path
+    global mainpokemon_growth_rate
+    global mainpokemon_level
+    global mainpokemon_xp, pop_up_dialog_message_on_defeat
+    if mainpokemon_growth_rate == "medium":
+        mainpokemon_growth_rate = "medium-fast"
+    level = mainpokemon_level
+    # Specify the growth rate and level you're interested in
+    growth_rate = f'{mainpokemon_growth_rate}'
+    # Open the CSV file
+    csv_file_path = str(next_lvl_file_path)  # Replace 'your_file_path.csv' with the actual path to your CSV file
+    with open(csv_file_path, 'r', encoding='utf-8') as file:
+        # Create a CSV reader
+        csv_reader = csv.DictReader(file, delimiter=';')
+
+        # Get the fieldnames from the CSV file
+        fieldnames = [field.strip() for field in csv_reader.fieldnames]
+
+        # Iterate through rows and find the experience for the specified growth rate and level
+        for row in csv_reader:
+            if row[fieldnames[0]] == str(level):  # Use the first fieldname to access the 'Level' column
+                experience = row[growth_rate]
+                experience = int(experience)
+                experience -= mainpokemon_xp
+                #if pop_up_dialog_message_on_defeat is True:
+                    #showInfo((f"Your main Pokemon {mainpokemon_name} Lvl {level} needs {experience} XP to reach the next level."))
+                break
+
         return experience
 
 class Downloader(QObject):
@@ -4498,11 +4125,9 @@ class Downloader(QObject):
         self.user_path_data = user_path_data
         self.badges_base_url = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/badges/"
         self.item_base_url = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/dream-world/"
-        self.sounds_base_url = "https://veekun.com/dex/media/pokemon/cries/"
-        #self.sound_names = sound_list
-        self.sound_names = list(range(1, 722))
-        #self.item_names = items_list
-        self.item_name = ["absorb-bulb"]
+        self.sounds_base_url = "https://play.pokemonshowdown.com/audio/cries/"
+        self.sound_names = sound_list
+        self.item_names = items_list
         if not os.path.exists(self.items_destination_to):
             os.makedirs(self.items_destination_to)
         if not os.path.exists(self.badges_destination_to):
@@ -4599,7 +4224,7 @@ class Downloader(QObject):
                         with open(file_path, 'w') as json_file:
                             json.dump(data, json_file, indent=2)
                     else:
-                       print(f"Failed to download data from {url}")  # Replace with a signal if needed
+                        print(f"Failed to download data from {url}")  # Replace with a signal if needed
                     progress = int((i / num_files) * 100)
                     self.progress_updated.emit(progress)
                 else:  # Handle "POKEAPI" case
@@ -4620,12 +4245,56 @@ class Downloader(QObject):
                 progress = int((i / num_files) * 100)
                 self.progress_updated.emit(progress)
             total_downloaded = 0
+            self.id_to = 898
+            self.downloading_sprites_txt.emit()
+            for pokemon_id in range(1, self.id_to + 1):
+                    for sprite_type in ["front_default", "back_default"]:
+                        if sprite_type == "front_default":
+                            base_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{pokemon_id}.png"
+                            response = requests.get(base_url)
+                            if response.status_code == 200:
+                                save_dir = self.front_dir
+                                with open(os.path.join(save_dir, f"{pokemon_id}.png"), "wb") as f:
+                                    f.write(response.content)
+                        elif sprite_type == "back_default":
+                            base_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/back/{pokemon_id}.png"
+                            response = requests.get(base_url)
+                            if response.status_code == 200:
+                                save_dir = self.back_dir
+                                with open(os.path.join(save_dir, f"{pokemon_id}.png"), "wb") as f:
+                                    f.write(response.content)
+                        total_downloaded += 1
+                        progress = int((pokemon_id / self.id_to) * 100)
+                        self.progress_updated.emit(progress)
+            self.downloading_item_sprites_txt.emit()
+            item_files = 336
+            i = 0
+            for item_name in self.item_names:
+                i += 1
+                item_url = self.item_base_url + item_name
+                response = requests.get(item_url)
+                if response.status_code == 200:
+                    with open(os.path.join(self.items_destination_to, item_name), 'wb') as file:
+                        file.write(response.content)
+                progress = int((i / item_files) * 100)
+                self.progress_updated.emit(progress)
+            # Emit the download_complete signal at the end of the download process
+            max_badges = 68
+            self.downloading_badges_sprites_txt.emit()
+            for badge_num in range(1,68):
+                badge_file = f"{badge_num}.png"
+                badge_url = self.badges_base_url + badge_file
+                response = requests.get(badge_url)
+                if response.status_code == 200:
+                    with open(os.path.join(self.badges_destination_to, badge_file), 'wb') as file:
+                        file.write(response.content)
+                progress = int((badge_num / max_badges) * 100)
+                self.progress_updated.emit(progress)
             self.downloading_sounds_txt.emit()
             num_sound_files = len(self.sound_names)
             i = 0
             for sound in self.sound_names:
                 i += 1
-                sound = f"{sound}.ogg"
                 sounds_url = self.sounds_base_url + sound
                 response = requests.get(sounds_url)
                 if response.status_code == 200:
@@ -4634,6 +4303,24 @@ class Downloader(QObject):
                 progress = int((i / num_sound_files) * 100)
                 self.progress_updated.emit(progress)
             self.downloading_gif_sprites_txt.emit()
+            base_url = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/"
+            total_downloaded = 0
+            self.id_to = 898
+            for pokemon_id in range(1, self.id_to + 1):
+                for sprite_type in ["front_showdown", "back_showdown"]:
+                    front_sprite_url = f"{base_url}other/showdown/{pokemon_id}.gif"
+                    response = requests.get(front_sprite_url)
+                    if response.status_code == 200:
+                        with open(os.path.join(self.front_gif_dir, f"{pokemon_id}.gif"), 'wb') as file:
+                            file.write(response.content)
+                    # Download back sprite
+                    back_sprite_url = f"{base_url}other/showdown/back/{pokemon_id}.gif"
+                    response = requests.get(back_sprite_url)
+                    if response.status_code == 200:
+                        with open(os.path.join(self.back_gif_dir, f"{pokemon_id}.gif"), 'wb') as file:
+                            file.write(response.content)
+                    progress = int((pokemon_id / self.id_to) * 100)
+                    self.progress_updated.emit(progress)
             self.download_complete.emit()
         except Exception as e:
             showWarning(f"An error occurred: {e}")  # Replace with a signal if needed
@@ -4767,7 +4454,7 @@ if database_complete != False and mainpokemon_empty is False:
     def inject_life_bar(web_content, context):
         global life_bar_injected, hp, name, level, id, battle_status, show_mainpkmn_in_reviewer, mainpokemon_xp, icon_path
         global frontdefault, backdefault, addon_dir, user_path_sprites, mainpokemon_id, mainpokemon_name, mainpokemon_level, mainpokemon_hp, mainpokemon_stats, mainpokemon_ev, mainpokemon_iv, mainpokemon_growth_rate
-        global hp_bar_thickness, xp_bar_config, xp_bar_location, hp_bar_config, xp_bar_spacer, hp_only_spacer, wild_hp_spacer, seconds, myseconds, view_main_front, styling_in_reviewer
+        global hp_bar_thickness, xp_bar_config, xp_bar_location, hp_bar_config, xp_bar_spacer, hp_only_spacer, wild_hp_spacer, seconds, myseconds, view_main_front
 
         experience_for_next_lvl = find_experience_for_level(mainpokemon_growth_rate, mainpokemon_level)
         if reviewer_image_gif == False:
@@ -5126,57 +4813,48 @@ if database_complete != False and mainpokemon_empty is False:
                 100% {{ transform: translateX(100vw); filter: drop-shadow(0 0 10px rgba(255, 0, 0, 0.5)); }}
             }}
             """
-            css += f"""
-            #pokebackground {{
-                color: white;
-                background-color: blue;
-                z-index: 99999;
-            }}
-            """
-            # background-image: url('{pokemon_image_file}'); Change to your image path */
-            if styling_in_reviewer is True:
-                # Inject the CSS into the head of the HTML content
-                web_content.head += f"<style>{css}</style>"
-                # Inject a div element at the end of the body for the life bar
-                #web_content.body += f'<div id="pokebackground">' try adding backgroudns to battle
-                if hp_bar_config is True:
-                    web_content.body += f'<div id="life-bar"></div>'
-                if xp_bar_config is True:
-                    web_content.body += f'<div id="xp-bar"></div>'
-                    web_content.body += f'<div id="next_lvl_text">Next Level</div>'
-                    web_content.body += f'<div id="xp_text">XP</div>'
-                # Inject a div element for the text display
-                web_content.body += f'<div id="name-display">{name.capitalize()} LvL: {level}</div>'
-                if hp > 0:
-                    web_content.body += f'{create_status_html(f"{battle_status}")}'
-                else:
-                    web_content.body += f'{create_status_html(f"fainted")}'
 
-                web_content.body += f'<div id="hp-display">HP: {hp}/{max_hp}</div>'
+            # background-image: url('{pokemon_image_file}'); Change to your image path */
+            # Inject the CSS into the head of the HTML content
+            web_content.head += f"<style>{css}</style>"
+            # Inject a div element at the end of the body for the life bar
+            if hp_bar_config is True:
+                web_content.body += f'<div id="life-bar"></div>'
+            if xp_bar_config is True:
+                web_content.body += f'<div id="xp-bar"></div>'
+                web_content.body += f'<div id="next_lvl_text">Next Level</div>'
+                web_content.body += f'<div id="xp_text">XP</div>'
+            # Inject a div element for the text display
+            web_content.body += f'<div id="name-display">{name.capitalize()} LvL: {level}</div>'
+            if hp > 0:
+                web_content.body += f'{create_status_html(f"{battle_status}")}'
+            else:
+                web_content.body += f'{create_status_html(f"fainted")}'
+
+            web_content.body += f'<div id="hp-display">HP: {hp}/{max_hp}</div>'
+            # Inject a div element at the end of the body for the life bar
+            image_base64 = get_image_as_base64(pokemon_image_file)
+            web_content.body += f'<div id="PokeImage"><img src="data:image/png;base64,{image_base64}" alt="PokeImage style="animation: shake 0s ease;"></div>'
+            if show_mainpkmn_in_reviewer > 0:
+                image_base64_mypkmn = get_image_as_base64(main_pkmn_imagefile_path)
+                web_content.body += f'<div id="MyPokeImage"><img src="data:image/png;base64,{image_base64_mypkmn}" alt="MyPokeImage" style="animation: shake 0s ease;"></div>'
+                web_content.body += f'<div id="myname-display">{mainpokemon_name.capitalize()} LvL: {mainpokemon_level}</div>'
+                web_content.body += f'<div id="myhp-display">HP: {mainpokemon_hp}/{mainpkmn_max_hp}</div>'
                 # Inject a div element at the end of the body for the life bar
-                image_base64 = get_image_as_base64(pokemon_image_file)
-                web_content.body += f'<div id="PokeImage"><img src="data:image/png;base64,{image_base64}" alt="PokeImage style="animation: shake 0s ease;"></div>'
-                if show_mainpkmn_in_reviewer > 0:
-                    image_base64_mypkmn = get_image_as_base64(main_pkmn_imagefile_path)
-                    web_content.body += f'<div id="MyPokeImage"><img src="data:image/png;base64,{image_base64_mypkmn}" alt="MyPokeImage" style="animation: shake 0s ease;"></div>'
-                    web_content.body += f'<div id="myname-display">{mainpokemon_name.capitalize()} LvL: {mainpokemon_level}</div>'
-                    web_content.body += f'<div id="myhp-display">HP: {mainpokemon_hp}/{mainpkmn_max_hp}</div>'
-                    # Inject a div element at the end of the body for the life bar
-                    if hp_bar_config is True:
-                        web_content.body += f'<div id="mylife-bar"></div>'
-                # Set the flag to True to indicate that the life bar has been injected
-                if pokeball == True:
-                    icon_base_64 = get_image_as_base64(icon_path)
-                    web_content.body += f'<div id="PokeIcon"><img src="data:image/png;base64,{icon_base_64}" alt="PokeIcon"></div>'
-                else:
-                    web_content.body += f'<div id="PokeIcon"></div>'
-                web_content.body += '</div>'
-                life_bar_injected = True
+                if hp_bar_config is True:
+                    web_content.body += f'<div id="mylife-bar"></div>'
+            # Set the flag to True to indicate that the life bar has been injected
+            if pokeball == True:
+                icon_base_64 = get_image_as_base64(icon_path)
+                web_content.body += f'<div id="PokeIcon"><img src="data:image/png;base64,{icon_base_64}" alt="PokeIcon"></div>'
+            else:
+                web_content.body += f'<div id="PokeIcon"></div>' 
+            life_bar_injected = True
         return web_content
 
     def update_life_bar(reviewer, card, ease):
         global hp, name, id, frontdefault, battle_status, user_path_sprites, show_mainpkmn_in_reviewer, mainpokemon_hp, mainpokemon_id, mainpokemon_name, mainpokemon_level, mainpokemon_stats, mainpokemon_ev, mainpokemon_iv, mainpokemon_xp, xp_bar_config
-        global mainpokemon_level, icon_path, empty_icon_path, seconds, myseconds, view_main_front, pokeball, styling_in_reviewer
+        global mainpokemon_level, icon_path, empty_icon_path, seconds, myseconds, view_main_front, pokeball
         pokeball = check_pokecoll_in_list(search_pokedex(name.lower(), "num"))
         if reviewer_image_gif == False:
             pokemon_imagefile = f'{search_pokedex(name.lower(), "num")}.png' #use for png files
@@ -5231,38 +4909,38 @@ if database_complete != False and mainpokemon_empty is False:
             status_html = create_status_html('fainted')
         elif hp > 0:
             status_html = create_status_html(f"{battle_status}")
-        if styling_in_reviewer is True:
-            # Refresh the reviewer content to apply the updated life bar
-            reviewer.web.eval('document.getElementById("life-bar").style.width = "' + str(pokemon_hp_percent) + '%";')
-            reviewer.web.eval('document.getElementById("life-bar").style.background = "linear-gradient(to right, ' + str(hp_color) + ', ' + str(hp_color) + ' ' + '100' + '%, ' + 'rgba(54, 54, 56, 0.7)' + '100' + '%, ' + 'rgba(54, 54, 56, 0.7)' + ')";')
-            reviewer.web.eval('document.getElementById("life-bar").style.boxShadow = "0 0 10px ' + hp_color + ', 0 0 30px rgba(54, 54, 56, 1)";');
-            if xp_bar_config is True:
-                experience_for_next_lvl = find_experience_for_level(mainpokemon_growth_rate, mainpokemon_level)
-                xp_bar_percent = int((mainpokemon_xp / int(experience_for_next_lvl)) * 100)
-                reviewer.web.eval('document.getElementById("xp-bar").style.width = "' + str(xp_bar_percent) + '%";')
-            name_display_text = f"{name.capitalize()} LvL: {level}"
-            hp_display_text = f"HP: {hp}/{max_hp}"
-            reviewer.web.eval('document.getElementById("name-display").innerText = "' + name_display_text + '";')
-            reviewer.web.eval('document.getElementById("hp-display").innerText = "' + hp_display_text + '";')
-            new_html_content = f'<img src="data:image/png;base64,{image_base64}" alt="PokeImage" style="animation: shake {seconds}s ease;">'
-            reviewer.web.eval(f'document.getElementById("PokeImage").innerHTML = `{new_html_content}`;')
-            if pokeball == True:
-                image_icon_path = get_image_as_base64(icon_path)
-                pokeicon_html = f'<img src="data:image/png;base64,{image_icon_path}" alt="PokeIcon">'
-            else:
-                pokeicon_html = ''
-            reviewer.web.eval(f'document.getElementById("PokeIcon").innerHTML = `{pokeicon_html}`;')
-            reviewer.web.eval(f'document.getElementById("pokestatus").innerHTML = `{status_html}`;')
-            if show_mainpkmn_in_reviewer > 0:
-                new_html_content_mainpkmn = f'<img src="data:image/png;base64,{image_base64_mainpkmn}" alt="MyPokeImage" style="animation: shake {myseconds}s ease;">'
-                main_name_display_text = f"{mainpokemon_name.capitalize()} LvL: {mainpokemon_level}"
-                main_hp_display_text = f"HP: {mainpokemon_hp}/{mainpkmn_max_hp}"
-                reviewer.web.eval('document.getElementById("mylife-bar").style.width = "' + str(mainpkmn_hp_percent) + '%";')
-                reviewer.web.eval('document.getElementById("mylife-bar").style.background = "linear-gradient(to right, ' + str(myhp_color) + ', ' + str(myhp_color) + ' ' + '100' + '%, ' + 'rgba(54, 54, 56, 0.7)' + '100' + '%, ' + 'rgba(54, 54, 56, 0.7)' + ')";')
-                reviewer.web.eval('document.getElementById("mylife-bar").style.boxShadow = "0 0 10px ' + myhp_color + ', 0 0 30px rgba(54, 54, 56, 1)";');
-                reviewer.web.eval(f'document.getElementById("MyPokeImage").innerHTML = `{new_html_content_mainpkmn}`;')
-                reviewer.web.eval('document.getElementById("myname-display").innerText = "' + main_name_display_text + '";')
-                reviewer.web.eval('document.getElementById("myhp-display").innerText = "' + main_hp_display_text + '";')
+
+        # Refresh the reviewer content to apply the updated life bar
+        reviewer.web.eval('document.getElementById("life-bar").style.width = "' + str(pokemon_hp_percent) + '%";')
+        reviewer.web.eval('document.getElementById("life-bar").style.background = "linear-gradient(to right, ' + str(hp_color) + ', ' + str(hp_color) + ' ' + '100' + '%, ' + 'rgba(54, 54, 56, 0.7)' + '100' + '%, ' + 'rgba(54, 54, 56, 0.7)' + ')";')
+        reviewer.web.eval('document.getElementById("life-bar").style.boxShadow = "0 0 10px ' + hp_color + ', 0 0 30px rgba(54, 54, 56, 1)";');
+        if xp_bar_config is True:
+            experience_for_next_lvl = find_experience_for_level(mainpokemon_growth_rate, mainpokemon_level)
+            xp_bar_percent = int((mainpokemon_xp / int(experience_for_next_lvl)) * 100)
+            reviewer.web.eval('document.getElementById("xp-bar").style.width = "' + str(xp_bar_percent) + '%";')
+        name_display_text = f"{name.capitalize()} Lvl: {level}"
+        hp_display_text = f"HP: {hp}/{max_hp}"
+        reviewer.web.eval('document.getElementById("name-display").innerText = "' + name_display_text + '";')
+        reviewer.web.eval('document.getElementById("hp-display").innerText = "' + hp_display_text + '";')
+        new_html_content = f'<img src="data:image/png;base64,{image_base64}" alt="PokeImage" style="animation: shake {seconds}s ease;">'
+        reviewer.web.eval(f'document.getElementById("PokeImage").innerHTML = `{new_html_content}`;')
+        if pokeball == True:
+            image_icon_path = get_image_as_base64(icon_path)
+            pokeicon_html = f'<img src="data:image/png;base64,{image_icon_path}" alt="PokeIcon">'
+        else:
+            pokeicon_html = ''
+        reviewer.web.eval(f'document.getElementById("PokeIcon").innerHTML = `{pokeicon_html}`;')
+        reviewer.web.eval(f'document.getElementById("pokestatus").innerHTML = `{status_html}`;')
+        if show_mainpkmn_in_reviewer > 0:
+            new_html_content_mainpkmn = f'<img src="data:image/png;base64,{image_base64_mainpkmn}" alt="MyPokeImage" style="animation: shake {myseconds}s ease;">'
+            main_name_display_text = f"{mainpokemon_name.capitalize()} Lvl: {mainpokemon_level}"
+            main_hp_display_text = f"HP: {mainpokemon_hp}/{mainpkmn_max_hp}"
+            reviewer.web.eval('document.getElementById("mylife-bar").style.width = "' + str(mainpkmn_hp_percent) + '%";')
+            reviewer.web.eval('document.getElementById("mylife-bar").style.background = "linear-gradient(to right, ' + str(myhp_color) + ', ' + str(myhp_color) + ' ' + '100' + '%, ' + 'rgba(54, 54, 56, 0.7)' + '100' + '%, ' + 'rgba(54, 54, 56, 0.7)' + ')";')
+            reviewer.web.eval('document.getElementById("mylife-bar").style.boxShadow = "0 0 10px ' + myhp_color + ', 0 0 30px rgba(54, 54, 56, 1)";');
+            reviewer.web.eval(f'document.getElementById("MyPokeImage").innerHTML = `{new_html_content_mainpkmn}`;')
+            reviewer.web.eval('document.getElementById("myname-display").innerText = "' + main_name_display_text + '";')
+            reviewer.web.eval('document.getElementById("myhp-display").innerText = "' + main_hp_display_text + '";')
 
     # Register the functions for the hooks
     gui_hooks.reviewer_will_end.append(reviewer_reset_life_bar_inject)
@@ -5535,7 +5213,7 @@ def export_all_pkmn_showdown():
                     pokemon_ev = pokemon['ev']
                     pokemon_iv = pokemon['iv']
 
-                    pokemon_info = "{} \nAbility: {}\nLevel: {}\nType: {}\nEVs: {} HP / {} Atk / {} Def / {} SpA / {} SpD / {} Spe\n IVs: {} HP / {} Atk / {} Def / {} SpA / {} SpD / {} Spe \n".format(
+                    pokemon_info = "\n{} \nAbility: {}\nLevel: {}\nType: {}\nEVs: {} HP / {} Atk / {} Def / {} SpA / {} SpD / {} Spe\n IVs: {} HP / {} Atk / {} Def / {} SpA / {} SpD / {} Spe \n".format(
                         pokemon_name,
                         pokemon_ability.capitalize(),
                         pokemon_level,
@@ -5555,7 +5233,6 @@ def export_all_pkmn_showdown():
                     )
                     for attack in pokemon_attacks:
                         pokemon_info += f"- {attack}\n"
-                    pokemon_info += f"\n"
                     pokemon_info_complete_text += pokemon_info
 
                     # Create labels to display the text
@@ -5589,96 +5266,6 @@ def export_all_pkmn_showdown():
         export_window.exec()
     except Exception as e:
         showInfo(f"An error occurred: {e}")
-
-def flex_pokemon_collection():
-    # Create a main window
-    export_window = QDialog()
-    #export_window.setWindowTitle("Export Pokemon to Pkmn Showdown")
-
-    # Information label
-    info = "Pokemon Infos have been Copied to your Clipboard! \nNow simply paste this text into https://pokepast.es/.\nAfter pasting the infos in your clipboard and submitting the needed infos on the right,\n you will receive a link to send friends to flex."
-    info_label = QLabel(info)
-
-# Get all pokemon data
-    global mypokemon_path
-    pokemon_info_complete_text = ""
-    try:
-        with (open(mypokemon_path, "r") as json_file):
-            captured_pokemon_data = json.load(json_file)
-
-            # Check if there are any captured Pokémon
-            if captured_pokemon_data:
-                # Counter for tracking the column position
-                column = 0
-                row = 0
-                for pokemon in captured_pokemon_data:
-                    pokemon_name = pokemon['name']
-                    pokemon_level = pokemon['level']
-                    pokemon_ability = pokemon['ability']
-                    pokemon_type = pokemon['type']
-                    pokemon_type_text = pokemon_type[0].capitalize()
-                    if len(pokemon_type) > 1:
-                        pokemon_type_text = ""
-                        pokemon_type_text += f"{pokemon_type[0].capitalize()}"
-                        pokemon_type_text += f" {pokemon_type[1].capitalize()}"
-                    pokemon_stats = pokemon['stats']
-                    pokemon_hp = pokemon_stats["hp"]
-                    pokemon_attacks = pokemon['attacks']
-                    pokemon_ev = pokemon['ev']
-                    pokemon_iv = pokemon['iv']
-
-                    pokemon_info = "{} \nAbility: {}\nLevel: {}\nType: {}\nEVs: {} HP / {} Atk / {} Def / {} SpA / {} SpD / {} Spe\n IVs: {} HP / {} Atk / {} Def / {} SpA / {} SpD / {} Spe \n".format(
-                        pokemon_name,
-                        pokemon_ability.capitalize(),
-                        pokemon_level,
-                        pokemon_type_text,
-                        pokemon_stats["hp"],
-                        pokemon_stats["atk"],
-                        pokemon_stats["def"],
-                        pokemon_stats["spa"],
-                        pokemon_stats["spd"],
-                        pokemon_stats["spe"],
-                        pokemon_iv["hp"],
-                        pokemon_iv["atk"],
-                        pokemon_iv["def"],
-                        pokemon_iv["spa"],
-                        pokemon_iv["spd"],
-                        pokemon_iv["spe"]
-                    )
-                    for attack in pokemon_attacks:
-                        pokemon_info += f"- {attack}\n"
-                    pokemon_info += f"\n"
-                    pokemon_info_complete_text += pokemon_info
-
-                    # Create labels to display the text
-                    #label = QLabel(pokemon_info_complete_text)
-                    # Align labels
-                    #label.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Align center
-                    info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Align center
-
-                    # Create a layout and add the labels, input field, and button
-                    layout = QVBoxLayout()
-                    layout.addWidget(info_label)
-                    #layout.addWidget(label)
-
-                    # Copy text to clipboard in Anki
-                    mw.app.clipboard().setText(pokemon_info_complete_text)
-        #save_button.clicked.connect(lambda: save_error_code(error_code_input.text()))
-        # Set the layout for the main window
-        open_browser_for_pokepaste = QPushButton("Open Pokepaste")
-        open_browser_for_pokepaste.clicked.connect(open_browser_window)
-        layout.addWidget(open_browser_for_pokepaste)
-
-        export_window.setLayout(layout)
-
-        export_window.exec()
-    except Exception as e:
-        showInfo(f"An error occurred: {e}")
-
-def open_browser_window():
-    # Open the Pokémon Showdown Team Builder in the default web browser
-    url = "https://pokepast.es/"
-    QDesktopServices.openUrl(QUrl(url))
 
 def calc_exp_gain(base_experience, w_pkmn_level):
     exp = int((base_experience * w_pkmn_level) / 7)
@@ -5752,6 +5339,7 @@ class TestWindow(QWidget):
         global first_start, pkmn_window
         if first_start == False:
             from aqt import mw
+
             # Get the geometry of the main screen
             main_screen_geometry = mw.geometry()
             # Calculate the position to center the ItemWindow on the main screen
@@ -5891,8 +5479,8 @@ class TestWindow(QWidget):
                 gender_symbol = ""  # None
 
             # custom font
-            custom_font = load_custom_font(int(26))
-            msg_font = load_custom_font(int(32))
+            custom_font = load_custom_font(26)
+            msg_font = load_custom_font(32)
             mainpokemon_lang_name = get_pokemon_diff_lang_name(int(mainpokemon_id))
             # Draw the text on top of the image
             # Adjust the font size as needed
@@ -6010,8 +5598,8 @@ class TestWindow(QWidget):
         mainlvl = (f"{mainpokemon_level}")
 
         # custom font
-        custom_font = load_custom_font(int(28))
-        msg_font = load_custom_font(int(32))
+        custom_font = load_custom_font(28)
+        msg_font = load_custom_font(32)
 
         # Draw the text on top of the image
         # Adjust the font size as needed
@@ -6085,14 +5673,14 @@ class TestWindow(QWidget):
             painter.drawPixmap(200,90,item_pixmap)
 
         # custom font
-        custom_font = load_custom_font(int(26))
+        custom_font = load_custom_font(26)
         message_box_text = f"You have received a item: {item.capitalize()} !"
         # Draw the text on top of the image
         # Adjust the font size as needed
         painter.setFont(custom_font)
         painter.setPen(QColor(255,255,255))  # Text color
         painter.drawText(50, 290, message_box_text)
-        custom_font = load_custom_font(int(20))
+        custom_font = load_custom_font(20)
         painter.setFont(custom_font)
         #painter.drawText(10, 330, "You can look this up in your item bag.")
         painter.end()
@@ -6143,7 +5731,7 @@ class TestWindow(QWidget):
             painter.drawPixmap(200,90,item_pixmap)
 
             # custom font
-            custom_font = load_custom_font(int(20))
+            custom_font = load_custom_font(20)
             message_box_text = f"You have received a badge for:"
             message_box_text2 = f"{badges[str(badge_number)]}!"
             # Draw the text on top of the image
@@ -6152,7 +5740,7 @@ class TestWindow(QWidget):
             painter.setPen(QColor(255,255,255))  # Text color
             painter.drawText(120, 270, message_box_text)
             painter.drawText(140, 290, message_box_text2)
-            custom_font = load_custom_font(int(20))
+            custom_font = load_custom_font(20)
             painter.setFont(custom_font)
             #painter.drawText(10, 330, "You can look this up in your item bag.")
             painter.end()
@@ -6643,14 +6231,14 @@ class StarterWindow(QWidget):
         painter.drawPixmap(311,-3,grass_pixmap)
 
         # custom font
-        custom_font = load_custom_font(int(28))
+        custom_font = load_custom_font(28)
         message_box_text = "Choose your Starter Pokemon"
         # Draw the text on top of the image
         # Adjust the font size as needed
         painter.setFont(custom_font)
         painter.setPen(QColor(255,255,255))  # Text color
         painter.drawText(110, 310, message_box_text)
-        custom_font = load_custom_font(int(20))
+        custom_font = load_custom_font(20)
         painter.setFont(custom_font)
         painter.drawText(10, 330, "Press G to change Generation")
         painter.end()
@@ -6689,7 +6277,7 @@ class StarterWindow(QWidget):
         painter.drawPixmap(125,10,image_pixmap)
 
         # custom font
-        custom_font = load_custom_font(int(32))
+        custom_font = load_custom_font(32)
         message_box_text = f"{(starter_name).capitalize()} was chosen as Starter !"
         # Draw the text on top of the image
         # Adjust the font size as needed
@@ -6732,7 +6320,7 @@ class StarterWindow(QWidget):
         painter.drawPixmap(125,10,image_pixmap)
 
         # custom font
-        custom_font = load_custom_font(int(32))
+        custom_font = load_custom_font(32)
         message_box_text = f"{(fossil_name).capitalize()} was brought to life !"
         # Draw the text on top of the image
         # Adjust the font size as needed
@@ -6798,7 +6386,7 @@ class EvoWindow(QWidget):
         painter.drawPixmap(125,10,image_pixmap)
 
         # custom font
-        custom_font = load_custom_font(int(20))
+        custom_font = load_custom_font(20)
         message_box_text = f"{(prevo_name).capitalize()} has evolved to {(pkmn_name).capitalize()} !"
         # Draw the text on top of the image
         # Adjust the font size as needed
@@ -6928,7 +6516,7 @@ evo_window = EvoWindow()
 class MyEventFilter(QObject):
     def eventFilter(self, obj, event):
         if obj is mw and event.type() == QEvent.Type.KeyPress:
-            global system, ankimon_key, hp
+            global system, ankimon_key
             open_window_key = getattr(Qt.Key, 'Key_' + ankimon_key.upper())
             if system == "mac":
                 if event.key() == open_window_key and event.modifiers() == Qt.KeyboardModifier.MetaModifier:
@@ -7465,6 +7053,7 @@ class ItemWindow(QWidget):
 
     def show_window(self):
         from aqt import mw
+
         # Get the geometry of the main screen
         main_screen_geometry = mw.geometry()
         
@@ -7662,6 +7251,7 @@ class AchievementWindow(QWidget):
 
     def show_window(self):
         from aqt import mw
+
         # Get the geometry of the main screen
         main_screen_geometry = mw.geometry()
         
@@ -7682,31 +7272,6 @@ def report_bug():
     QDesktopServices.openUrl(QUrl(bug_url))
 
 achievement_bag = AchievementWindow()
-
-# Custom Dialog class
-class Version_Dialog(QDialog):
-    def __init__(self):
-        super().__init__()
-        global icon_path
-        self.setWindowTitle("Ankimon Notifications")
-        self.setGeometry(100, 100, 600, 400)
-        layout = QVBoxLayout()
-        self.text_edit = QTextEdit()
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff) # For horizontal scrollbar, if you want it off
-        self.local_file_path = addon_dir / "update_notes.md"
-        self.local_content = read_local_file(self.local_file_path)
-        self.html_content = markdown.markdown(self.local_content)
-        self.text_edit.setHtml(self.html_content)
-        layout.addWidget(self.text_edit)
-        self.setWindowIcon(QIcon(str(icon_path)))
-        self.setLayout(layout)
-    
-    def open(self):
-        self.exec()
-
-version_dialog = Version_Dialog()
 
 #buttonlayout
 mw.pokemenu = QMenu('&Ankimon', mw)
@@ -7745,11 +7310,6 @@ if database_complete != False:
     qconnect(test_action7.triggered, export_all_pkmn_showdown)
     mw.pokemenu.addAction(test_action7)
 
-    flex_pokecoll_action = QAction("Export All Pokemon to PokePast for flexing", mw)
-    qconnect(flex_pokecoll_action.triggered, flex_pokemon_collection)
-    mw.pokemenu.addAction(flex_pokecoll_action)
-    
-
 test_action11 = QAction("Check Effectiveness Chart", mw)
 test_action11.triggered.connect(eff_chart.show_eff_chart)
 mw.pokemenu.addAction(test_action11)
@@ -7782,152 +7342,29 @@ rate_action = QAction("Rate This", mw)
 rate_action.triggered.connect(rate_addon_url)
 mw.pokemenu.addAction(rate_action)
 
-version_action = QAction("Version", mw)
-version_action.triggered.connect(version_dialog.open)
-mw.pokemenu.addAction(version_action)
-
     #https://goo.gl/uhAxsg
     #https://www.reddit.com/r/PokemonROMhacks/comments/9xgl7j/pokemon_sound_effects_collection_over_3200_sfx/
     #https://archive.org/details/pokemon-dp-sound-library-disc-2_202205
-    #https://www.sounds-resource.com/nintendo_switch/pokemonswordshield/
 
-# addHook to function to Ankimote
-from aqt import mw
-from aqt.utils import showInfo
-from anki.hooks import addHook
+"""
+Future Code Notes
 
-# Define lists to hold hook functions
-catch_pokemon_hooks = []
-defeat_pokemon_hooks = []
+       mw_x = mw.x()
+        mw_y = mw.y()
+        width = mw.width()
+        height = mw.height()
+        akw_height = self.height()
+        akw_width = self.width()
 
-# Function to add hooks to catch_pokemon event
-def add_catch_pokemon_hook(func):
-    catch_pokemon_hooks.append(func)
-
-# Function to add hooks to defeat_pokemon event
-def add_defeat_pokemon_hook(func):
-    defeat_pokemon_hooks.append(func)
-
-# Custom function that triggers the catch_pokemon hook
-def CatchPokemonHook():
-    global hp
-    if hp < 1:
-        catch_pokemon("")
-    for hook in catch_pokemon_hooks:
-        hook()
-
-# Custom function that triggers the defeat_pokemon hook
-def DefeatPokemonHook():
-    global hp
-    if hp < 1:
-        kill_pokemon()
-        new_pokemon()
-    for hook in defeat_pokemon_hooks:
-        hook()
-
-# Hook to expose the function
-def on_profile_loaded():
-    mw.defeatpokemon = DefeatPokemonHook
-    mw.catchpokemon = CatchPokemonHook
-    mw.add_catch_pokemon_hook = add_catch_pokemon_hook
-    mw.add_defeat_pokemon_hook = add_defeat_pokemon_hook
-
-# Add hook to run on profile load
-addHook("profileLoaded", on_profile_loaded)
-
-from aqt import gui_hooks
-from anki.cards import Card
-from aqt.reviewer import Reviewer
-from aqt import mw  # Importing the main Anki window object
-from aqt.utils import downArrow, shortcut, showInfo
-
-def catch_shorcut_function():
-    if hp > 1:
-        tooltip("You only catch a pokemon once its fained !")
-    else:
-        catch_pokemon("")
-
-def defeat_shortcut_function():
-    if hp > 1:
-        tooltip("Wild pokemon has to be fainted to defeat it !")
-    else:
-        kill_pokemon()
-        new_pokemon()
-
-catch_shortcut = catch_shortcut.lower()
-defeat_shortcut = defeat_shortcut.lower()
-#// adding shortcuts to _shortcutKeys function in anki
-def _shortcutKeys_wrap(self, _old):
-    original = _old(self)
-    original.append((catch_shortcut, lambda: catch_shorcut_function()))
-    original.append((defeat_shortcut, lambda: defeat_shortcut_function()))
-    return original
-
-Reviewer._shortcutKeys = wrap(Reviewer._shortcutKeys, _shortcutKeys_wrap, 'around')
-
-if reviewer_buttons is True:
-    #// Choosing styling for review other buttons in reviewer bottombar based on chosen style
-    button_style = """
-    .button_style {
-        position: absolute;
-        white-space: nowrap;
-        font-size: small;
-        right: 0px;
-        transform: translate(-50%, -100%);
-        font-weight: normal;
-        display: inline-block;
-        }
-    """
-    Review_linkHandelr_Original = Reviewer._linkHandler
-    # Define the HTML and styling for the custom button
-    def custom_button():
-        return f"""<button title="Shortcut key: C" onclick="pycmd('catch');" {button_style}>Catch</button>"""
-
-    # Update the link handler function to handle the custom button action
-    def linkHandler_wrap(reviewer, url):
-        if url == "catch":
-            catch_shorcut_function()
-        elif url == "defeat":
-            defeat_shortcut_function()
-        else:
-            Review_linkHandelr_Original(reviewer, url)
-
-    def _bottomHTML(self) -> str:
-        return """
-        <center id=outer>
-        <table id=innertable width=100%% cellspacing=0 cellpadding=0>
-        <tr>
-        <td align=start valign=top class=stat>
-        <button title="%(editkey)s" onclick="pycmd('edit');">%(edit)s</button></td>
-        <td align=center valign=top id=middle>
-        </td>
-        <td align=center valign=top class=stat>
-        <button title="%(CatchKey)s" onclick="pycmd('catch');">Catch Pokemon</button>
-        <button title="%(DefeatKey)s" onclick="pycmd('defeat');">Defeat Pokemon</button>
-        </td>
-        <td align=end valign=top class=stat>
-        <button title="%(morekey)s" onclick="pycmd('more');">%(more)s %(downArrow)s</button>
-        <span id=time class=stattxt></span>
-        </td>
-        </tr>
-        </table>
-        </center>
-        <script>
-        time = %(time)d;
-        timerStopped = false;
-        </script>
-        """ % dict(
-            edit=tr.studying_edit(),
-            editkey=tr.actions_shortcut_key(val="E"),
-            more=tr.studying_more(),
-            morekey=tr.actions_shortcut_key(val="M"),
-            downArrow=downArrow(),
-            time=self.card.time_taken() // 1000,
-            CatchKey=tr.actions_shortcut_key(val=f"{catch_shortcut}"),
-            DefeatKey=tr.actions_shortcut_key(val=f"{defeat_shortcut}"),
-        )
-
-    # Replace the current HTML with the updated HTML
-    Reviewer._bottomHTML = _bottomHTML  # Assuming you have access to self in this context
-    # Replace the original link handler function with the modified one
-    Reviewer._linkHandler = linkHandler_wrap
+        amw_center = True
+        if amw_center is True:
+            if height > akw_height:
+                y = int(mw_y + ((height/2) - (akw_height/2)))
+            else:
+                y = int(mw_y + ((akw_height/2) - (height/2)))
+        amw_left = True
+        amw_right = False
+        if amw_right is True:
+            x = int(mw_x + width)
+        elif amw_left is True:
+            x = int(mw_x-(akw_width))"""
